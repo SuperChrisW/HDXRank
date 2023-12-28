@@ -76,19 +76,17 @@ def list_files_in_directory(directory):
 
 def copyfiles(key, proflex_dir, dst_dir): 
     proflex_key = f'{key}_proflexdataset'
-    #cluster_key = f'decomp_list'
-    #src_cluster = os.path.join(proflex_dir, cluster_key)
+    cluster_key = f'decomp_list'
+    src_cluster = os.path.join(proflex_dir, cluster_key)
     src_proflex = os.path.join(proflex_dir, proflex_key)
     
-    #path1 = '/decomp/'+f'decomp_{key}'
-    #path2 = '/proflexdataset/'+proflex_key
-    #cluster_filepath = dst_dir + path1
-
-    path2 = '/'+proflex_key
+    path1 = f'/decomp_{key}'
+    path2 = f'/{proflex_key}'
+    cluster_filepath = dst_dir + path1
     proflex_filepath = dst_dir + path2
-    if os.path.isfile(src_proflex):
-        #and os.path.isfile(src_cluster):
-        #shutil.move(src_cluster, cluster_filepath)        
+    
+    if os.path.isfile(src_proflex) and os.path.isfile(src_cluster):
+        shutil.move(src_cluster, cluster_filepath)        
         shutil.move(src_proflex, proflex_filepath)
         return True
     else:
