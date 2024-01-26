@@ -11,6 +11,7 @@ from collections import Counter
 from Bio.PDB import PDBParser, is_aa
 from Bio.PDB.DSSP import make_dssp_dict, DSSP
 import warnings
+import pandas as pd
 
 #from biotite.structure import AtomArray, AtomArrayStack, sasa
 #import biotite.structure.io.pdb as pdb
@@ -20,13 +21,14 @@ warnings.filterwarnings("ignore")
 ################################# ANSSURR rigidity process block #################################
 class res(object):
     _registry = []
-    def __init__(self, i, name, atom):
+    def __init__(self, i, name, atom, chain_id):
         self._registry.append(self)
         self.clusters = []
         self.energy = 0
         self.i = i
         self.name = name
         self.CA = atom
+        self.chain_id = chain_id
 
 def rescale_FIRST(FIRST, smooth_ = True):
     K = 315777.09
@@ -34,7 +36,7 @@ def rescale_FIRST(FIRST, smooth_ = True):
     Hartree = 0.00038
     result = np.exp((4.2 * FIRST * Hartree) * K / T)
     result[np.isnan(FIRST)] = np.nan
-    #transverse result matrix
+
     if smooth_:    
         result = result.T
         for i in range(len(result)):
@@ -104,43 +106,38 @@ def index_consecutive_letters(letter_list):
 
 
 ################################# protein property output block #################################
-### output ASSURR residue-wise flexibility ###
-def ASSURR_flexibility(proflex_path, dssp_path, save_path):
-## FIXME: the file path is not correct, need to be fixed
-    
-    if not os.path.exists(proflex_path) and not os.path.exists(dssp_path):
-        print('cannot find the folder')
-        return False
-    for file in os.listdir(dssp_path):
-        PDB = file.split('.')[0]
-        if PDB == '': continue
-        if os.path.exists(f'{save_path}/rigidity_{PDB}.txt'): continue
+### output modified ASSURR residue-wise flexibility ###
 
-        ss_structure = []        
-        dssp_RSA_path = os.path.join(dssp_path, f'{PDB}.dssp.txt')
+def ASSURR_flexibility(PDB, dssp_file, proflex_path, save_path):
+        ss_structure = [] 
+        dssp_RSA_path = os.path.join(dssp_file)
         with open(dssp_RSA_path, 'r') as f:
             data = f.readlines()
             for line in data:
                 ss_value = line.split()[2]
                 ss_structure.append(ss_value)
         ss_structure = np.array(ss_structure)
+        print('extracted ss list shape:', ss_structure.shape)
 
         energy_list_m = []
-        #try:     
+        #try:
         print(f'processing {PDB}')   
-        linkref, ph_bonds, torsions, CA_mut, natom, _, _ = read_edge(f'{PDB}_proflexdataset', f'{proflex_path}', 0, central_atom= 'CA')
-        rigid_clst_m, clst_ensemble_m = read_decomp_list(f'decomp_{PDB}', f'{proflex_path}', natom, 0, ss_list=ss_structure)
+        linkref, ph_bonds, torsions, CA_mut, natom, _, _ = read_edge(f'{PDB}_clean_Hplus_proflexdataset',\
+                                                                      f'{proflex_path}', 0, central_atom= 'CA')
+        rigid_clst_m, clst_ensemble_m = read_decomp_list(f'decomp_{PDB}_clean_Hplus', f'{proflex_path}', natom, 0, ss_list=ss_structure)
         for residue in res._registry:
             energy_list_m.append(residue.energy)
         
         energy_list_m = np.reshape(energy_list_m, (len(energy_list_m), 1))
 
         rescale_rigid_m = rescale_FIRST(energy_list_m, smooth_ = True)
-        np.savetxt(f'{save_path}/rigidity_{PDB}.txt', rescale_rigid_m)
+
+        combined_data = [(residue.i, residue.name, residue.chain_id, rescale_rigid_m[idx]) for idx, residue in enumerate(res._registry)]
+        combined_array = np.array(combined_data, dtype=[('index', int), ('name', 'U10'),('chain', 'U10'), ('energy', float)])  # 'U10' is a placeholder for string type, adjust length as needed
+        np.savetxt(f'{save_path}/rigidity_{PDB}.txt', combined_array, fmt='%i %s %s %f')
         #except Exception as e:
         #    print(f'cannot process {PDB} as {e}')
         #    continue
-    return True
 
 ### output relative solvent accessible surface area (SASA) by biopython.PDB.DSSP ###
 ### The solvent accessible surface area (SASA) was calculated using BioPython and default Sander and Rost values (Cock et al., 2009; Rost and Sander, 1994). 
@@ -195,7 +192,6 @@ def biotite_SASA(file_list, root_dir, fname): ## FIXME: the file path is not cor
         PDB = file.split('.')[0]
         print(PDB)
         if PDB == '': continue
-        #if PDB != '1OPA_wiH': continue
         PDB_folder = os.path.join(f'{root_dir}/HDX_Dynamic', f'{PDB}')
 
         ensemble = [f'{PDB}{suffix}' for suffix in fname]
@@ -275,14 +271,18 @@ def read_edge(key, direct, H_bond_cutoff = -1.0, central_atom = 'CA'): # read th
     with open(path, 'r') as f:
         data = f.read().strip().split('\n') 
         for line in data:
+            #if line[21] is not chain_id: continue # only read the signated chain
+
             ############## clustering atoms into residue group ###############
             if line[:4] == 'ATOM':
                 resn = line[17:20].replace(' ','') # resn is residue name, remove spaces
                 natom += 1 
+                chain_id = line[21]
+
                 res_id = int(line[22:26])
                 if line[13:15].strip() == central_atom: ## should be CA
                     CA_list[res_id] = int(line[6:11])-1 # CA index starts from 0 
-                    residues = res(res_id, resn, natom)
+                    residues = res(res_id, resn, natom, chain_id)
 
             ############## read covalent bonds except psudoatoms ###############
             elif line[:9] == 'REMARK:CF':
@@ -345,9 +345,6 @@ def read_edge(key, direct, H_bond_cutoff = -1.0, central_atom = 'CA'): # read th
                 so = bond[0]
                 sf = bond[-1]
                 
-    #    print("total residue: ", len(clst.keys()))
-    #    print("total atom: ", len(rev_clst.keys()))
-#    print(nph)
     return linkref, ph_bonds, torsions, CA_list, natom, (hbonds, H_energy, bond_type), descritpion
 
 def read_decomp_list(filename, directory, natom, cutoff = -1.0, ss_list = None):
@@ -356,6 +353,10 @@ def read_decomp_list(filename, directory, natom, cutoff = -1.0, ss_list = None):
     decomp_cluster = {} # rigid cluster to atom mapping
     rigid_clusters = [] # rigid cluster list (contain atoms >= 15)
     H_energy = []
+
+    min_index_residue = min(res._registry, key=lambda r: r.i)
+    min_res_id = min_index_residue.i
+
 
     if len(ss_list) > 0:
         ss_clst = index_consecutive_letters(ss_list)
@@ -415,8 +416,8 @@ def read_decomp_list(filename, directory, natom, cutoff = -1.0, ss_list = None):
             if r.clusters[x] in rigid_clusters[x]: # if this res is belong to a rigid cluster, add energy
                 
                 res_id = r.i
-                ss_type = ss_list[res_id-1]
-                ss_clst_id = ss_res[res_id-1]
+                ss_type = ss_list[res_id-min_res_id]
+                ss_clst_id = ss_res[res_id-min_res_id]
                 ss_clst_num = len(ss_clst[ss_clst_id])
                 #print(ss_type, ss_clst_num)
                 
