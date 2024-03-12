@@ -1,0 +1,18 @@
+        Hydrogen bond geometric selection criteria:
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Donor-Acceptor distance <= 3.5 Ang. without sulfur
+        Donor-Acceptor distance <= 4 Ang. with sulfur
+        Donor-Acceptor distance <= 4.5 Ang. salt bridge
+        Hydrogen-Acceptor distance <= 2.5 Ang. without sulfur
+        Hydrogen-Acceptor distance <= 3 Ang. with sulfur
+        Hydrogen-Acceptor distance <= 3.5 Ang. salt bridge
+        Donor-Hydrogen-Acceptor angle >= 110 Deg.
+        Hydrogen-Acceptor-Preacceptor angle >= 90 Deg.
+
+        Hydrogen bond energetic selection criteria:
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Maximum allowed hydrogen bonding energy = 0 Kcal/Mol
+
+        Non-covalent bond selection criteria:
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Default: Remove *ALL* H-bonds involving waters

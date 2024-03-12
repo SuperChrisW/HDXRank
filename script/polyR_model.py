@@ -12,38 +12,40 @@ import os
 import pandas as pd
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-correction_value = 0
-def seq_embedding(HDX_dataframe, vector_file, state, mismatch_report = False):
-  # read HDX data file
+def seq_embedding(HDX_dataframe, vector_file, protein, state, db, chain,
+                    mismatch_report = True, correction_value = 0, contact_filter = True):
+    # read HDX data file
     datafile = pd.read_excel(HDX_dataframe, sheet_name='Sheet1')
     datafile.columns = datafile.columns.str.lower()
-    datafile = datafile[datafile['state'] == state]
-    #datafile = datafile.drop_duplicates(subset=['sequence'])
+    datafile = datafile[(datafile['state'].str.strip() == state) & (datafile['protein'].str.strip() == protein)]
+    
     # filter peptides > 30 AA
     max_len = 30
     df = datafile[datafile['sequence'].str.len() < max_len] # sequence column
+    df = df.sort_values(by=['start', 'end'], ascending=[True, True])
 
+    # keep only the contact residues between chains
+    if contact_filter:
+        cutoff = 8.5
+        res_contact_pairs = db.get_contact_residues(
+                cutoff=cutoff, return_contact_pairs=True)
+        df, keys_to_pop = contact_filter(res_contact_pairs, chain, df)
+        print(f"Removed {len(keys_to_pop)} no-contact peptides by distance filter {cutoff}A.")
 
     start_pos = [x + correction_value for x in df['start'].astype(int).tolist()]
     end_pos = [x + correction_value for x in df['end'].astype(int).tolist()]
-
     seq = df['sequence'].tolist()
     log_t = df['log_t'].to_numpy()
 
     embedding = pd.read_table(vector_file, header=None)
-
     embed_array = embedding.loc[:,2:].to_numpy()
-    # remove the 7th column, which is the rigidity value
-    #embed_array = np.delete(embed_array, 0, axis = 1)
-
     embed_seq = embedding.loc[:,1].to_numpy()
 
     row_size = len(start_pos)
-    nfactor = embed_array.shape[-1] +1  # 1 SASA, 5 HDMD, 1 rigidity, 30 HHblits, 9 ss encoding, 1 log_t
-
+    nfactor = embed_array.shape[-1] +1  # 1 SASA, 5 HDMD, 9 ss encoding, 1 rigidity, 30 HHblits, 1 log_t
     input_array = np.zeros((row_size,nfactor,max_len)) # create an empty array
-    pop_idx = []
 
+    pop_idx = []
     for i, (start, end, sequence) in enumerate(zip(start_pos, end_pos, seq)):
         embed_sequence = ''.join(embed_seq[start - 1:end])
         sequence = sequence.replace(' ','')
@@ -62,14 +64,29 @@ def seq_embedding(HDX_dataframe, vector_file, state, mismatch_report = False):
 
     start_pos = [x for i, x in enumerate(start_pos) if i not in pop_idx]
     end_pos = [x for i, x in enumerate(end_pos) if i not in pop_idx]
+    log_t = [x for i, x in enumerate(log_t) if i not in pop_idx]
     
     non_empty_mask = ~(input_array == 0).all(axis=(1, 2))
-    output_array = input_array[non_empty_mask, :, :]
+    output_array = input_array[non_empty_mask, :, :] #filter those failed sequences from the input ensembles
 
     truth = df["%d"].to_numpy()
     truth = truth[non_empty_mask]
-    return output_array, truth, start_pos, end_pos
+    return output_array, truth, start_pos, end_pos, log_t
 
+def contact_filter(res_contact_pairs, chain, df):
+    keys_to_pop = []
+    for i, row in df.iterrows():
+        res_range = range(row['start'], row['end'] + 1)
+        if chain == 'A':
+            if not any([res[1] in res_range for res in res_contact_pairs.keys()]):
+                keys_to_pop.append(i)
+        elif chain == 'B':
+            contact_list = list(res_contact_pairs.values())
+            contact_list = [res for sub_list in contact_list for res in sub_list]
+            if not any([res[1] in res_range for res in contact_list]):
+                keys_to_pop.append(i)
+    df = df.drop(keys_to_pop)
+    return df, keys_to_pop
 
 if __name__ == "__main__":
     root_dir = "/Users/liyao/Desktop/Tsuda_Lab/Source_code/AI-HDX-main/dataset/filtered_results"

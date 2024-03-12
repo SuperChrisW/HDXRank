@@ -96,7 +96,7 @@ def copyfiles(key, proflex_dir, dst_dir):
 def pdb_clean(src_path, dst_path):
     if os.path.exists(src_path):
         with open(src_path, 'r') as src_file, open(dst_path, 'w') as dst_file:
-            #dst_file.write('HEADER    \n')
+            dst_file.write('HEADER    \n')
             for line in src_file:
                 if line.startswith('ATOM') or line.startswith('HETATM') or line.startswith('TER'):
                     dst_file.write(line)

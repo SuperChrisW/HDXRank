@@ -5,8 +5,8 @@ import os
 import shutil
 
 # Comparative modeling by the AutoModel class
-from modeller import *              # Load standard Modeller classes
-from modeller.automodel.allhmodel import AllHModel
+#from modeller import *              # Load standard Modeller classes
+#from modeller.automodel.allhmodel import AllHModel
 from Bio.Align import PairwiseAligner
 from Bio.PDB import PDBParser
 from Bio.Data.PDBData import protein_letters_1to3
@@ -235,26 +235,17 @@ protein_letters_1to3 = {
 #protein_letters_3to1["MSE"] = "M"
 non_StdAA = ['TRO', 'PYR', 'SNN', 'PTR', 'PCA']
     
-def get_pdb_seq(structure, chain_id = 'A'):
+def get_pdb_seq(structure, chain_id = 'A', fill_gap = True):
     if len(structure) == 0: #if succussfully read the pdb file
         return None, None
-
-    # Get all the chains present in the structure
+    
     chains = list(structure.get_chains())
-#    print(f"Number of chains: {len(chains)}")
 
     for chain in chains:
-#    if int(chain_index) < len(chains):
-        # Get the specified chain
-#        chain_A = chains[chain_index]
-#        ID = chain_A.get_id()
-#        print(f"Chain ID: {ID}")
-
         if not chain_id == chain.id:
             continue
 
         sequence = ""
-#        chain_seq = []
 
         previous_residue_id = None
         residue_indices = {}
@@ -263,8 +254,6 @@ def get_pdb_seq(structure, chain_id = 'A'):
             residue_name = residue.get_resname()
             if residue_name == "MSE":
                 residue_name = "MET"
-#            if residue.id[1] not in residue_indices.keys():
-#                residue_indices[residue.id[1]] = []
 
             if not is_aa(residue_name, standard=False) and residue_name != "MET":
                 continue  # Skip the non-amino acid residue
@@ -278,16 +267,16 @@ def get_pdb_seq(structure, chain_id = 'A'):
 
             # Check for discontinuity
             current_residue_id = residue.get_id()[1]
-            if previous_residue_id is not None and current_residue_id != previous_residue_id + 1:
-                gap_size = current_residue_id - previous_residue_id - 1
-                sequence += "-" * gap_size
+            if fill_gap:
+                if previous_residue_id is not None and current_residue_id != previous_residue_id + 1:
+                    gap_size = current_residue_id - previous_residue_id - 1
+                    sequence += "-" * gap_size
             try:
                 sequence += aa
             except Exception as e:
                 print(residue_name, aa, '//')
                 return False, False
             previous_residue_id = current_residue_id
-#        chain_seq.append(sequence)
 
     return sequence, residue_indices
 

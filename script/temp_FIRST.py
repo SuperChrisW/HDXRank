@@ -6,15 +6,16 @@ import pandas as pd
 import os
 import warnings
 
-root_dir = '/Users/liyao/Desktop/Tsuda_Lab/Source_code/AI-HDX-main/HDX_MS_dataset/database_collection/feature/CSN3-CSN8'
+root_dir = '/Users/liyao/Desktop/Tsuda_Lab/Source_code/AI-HDX-main/HDX_MS_dataset/database_collection/feature/AF_Go_complex'
 proflex_dir = f'/Users/liyao/Desktop/Tsuda_Lab/Source_code/ProFlex-master/proflex'
 hbplus_dir = '/Users/liyao/Desktop/Tsuda_Lab/Source_code/hbplus'
 
-pdb_dir = f'{root_dir}/structure'
-save_dir = f'{root_dir}/proflex_files'
+pdb_dir = f'{root_dir}/structure/alpha-beta'
+save_dir = f'{root_dir}/proflex_files/alpha-beta'
 fail_list = []
 if os.path.isdir(save_dir) == False:
     os.mkdir(save_dir)
+
 '''
 fname = 'merged_apo.xlsx'
 apo_df = pd.read_excel(f'{root_dir}/../{fname}', sheet_name='Sheet1')

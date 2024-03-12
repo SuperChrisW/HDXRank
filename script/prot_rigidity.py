@@ -110,17 +110,17 @@ def index_consecutive_letters(letter_list):
 
 def ASSURR_flexibility(PDB, dssp_file, proflex_path, save_path):
         ss_structure = [] 
-        dssp_RSA_path = os.path.join(dssp_file)
-        with open(dssp_RSA_path, 'r') as f:
-            data = f.readlines()
-            for line in data:
-                ss_value = line.split()[2]
-                ss_structure.append(ss_value)
+        for file in dssp_file:
+            with open(file, 'r') as f:
+                data = f.readlines()
+                for line in data:
+                    ss_value = line.split()[2]
+                    ss_structure.append(ss_value)
         ss_structure = np.array(ss_structure)
         print('extracted ss list shape:', ss_structure.shape)
 
         energy_list_m = []
-        #try:
+        
         print(f'processing {PDB}')   
         linkref, ph_bonds, torsions, CA_mut, natom, _, _ = read_edge(f'{PDB}_clean_Hplus_proflexdataset',\
                                                                       f'{proflex_path}', 0, central_atom= 'CA')

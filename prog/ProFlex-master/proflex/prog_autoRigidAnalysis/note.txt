@@ -1,0 +1,5 @@
+Note
+
+Rename folder to "prog" and return to proflex folder, run "make"
+
+auto_rigid analysis mode
