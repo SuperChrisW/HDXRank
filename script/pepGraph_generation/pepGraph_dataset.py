@@ -2,14 +2,19 @@ import os
 import copy
 import numpy as np
 import pandas as pd
+import networkx as nx
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
+from torch_geometric.utils import from_networkx
 
 from Bio.PDB.Polypeptide import protein_letters_3to1
+from Bio.PDB import PDBParser, Selection
+
 from pepGraph_utlis import load_embedding, neighbor_search, neighbor_filter
+
 
 class atoms(object):
     _registry = {}
@@ -27,13 +32,12 @@ class atoms(object):
 
 class res(object):
     _registry = []
-    def __init__(self, i, name, atom, chain_id, position):
+    def __init__(self, i, name, chain_id, position):
         self._registry.append(self)
         self.clusters = []
         self.energy = 0
         self.i = i
         self.name = name
-        self.CA = atom
         self.chain_id = chain_id
         self.position = position
     
@@ -300,13 +304,12 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction): # read the HDX
         if residue.chain_id not in res_chainsplit.keys():
             res_chainsplit[residue.chain_id] = []
         res_chainsplit[residue.chain_id].append(residue)
+    print('residue chain split:', res_chainsplit.keys())
 
     ## seperately process states
     for index, (protein, state, chain) in enumerate(zip(proteins, states, chains)):
         temp_HDX_df = HDX_df[(HDX_df['state']==state) & (HDX_df['protein']==protein)]
-        #temp_HDX_df = temp_HDX_df[temp_HDX_df['sequence'].str.len() < max_len]
         temp_HDX_df = temp_HDX_df.sort_values(by=['start', 'end'], ascending=[True, True])
-        #temp_HDX_df = temp_HDX_df.drop_duplicates(subset=['sequence'])
 
         print(protein, state, chain, temp_HDX_df.shape)
 
@@ -332,71 +335,72 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction): # read the HDX
         print("no peptide found")
         return False
     else:
-        pep.set_pep_position()
+        #pep.set_pep_position() # lead to error
         return True
 
-def search_local_graph(graph):
-    '''
-    generate the local graph for the peptide (self + shell 1 nodes) 
-    '''
-    graph_ensemble = []
-    for peptide in pep._registry:
+def distance_ResGraph(pdb_file, distance_cutoff, protein_chain):
+    parser = PDBParser()
+    structure = parser.get_structure('PDB_structure', pdb_file)
+    # Filtering by protein_chain (assuming protein_chain can be a string or a list)
+    if isinstance(protein_chain, str):
+        chains = [chain for chain in structure.get_chains() if chain.id == protein_chain]
+    else:
+        chains = [chain for chain in structure.get_chains() if chain.id in protein_chain]
+    print('chains:', chains)
+    residues = Selection.unfold_entities(chains, 'R')
+    G = nx.Graph()
+    for i, residue in enumerate(residues):
+        residue_id = (residue.get_parent().id, residue.id[1])  # Tuple of (chain ID, residue ID)
+        G.add_node(i, residue_id=residue_id)
+        res(residue.id[1], residue.get_resname(), residue.get_parent().id, residue['CA'].coord)
+    
+    # Add edges based on the distance cutoff
+    for i, residue1 in enumerate(residues):
+        for j, residue2 in enumerate(residues):
+            if i >= j:  # Avoid repeating pairs
+                continue
+            try:
+                # Calculate distance between alpha carbons; handle missing 'CA' atoms
+                distance = np.linalg.norm(residue1["CA"].coord - residue2["CA"].coord)
+                if distance <= distance_cutoff:
+                    G.add_edge(i, j, edge_attr=torch.tensor([distance]))
+            except KeyError: # Skip residues without a 'CA' atom
+                continue
+    return G
 
-        graph_copy = copy.deepcopy(graph)
-        start = peptide.start
-        end = peptide.end
-        chain = peptide.chain
-        print(peptide.i, chain, start, end)
-        
-        neighbor1 = neighbor_search([peptide.i], graph_copy.edge_index.t())
-        neighbors = set(list(neighbor1) + [peptide.i])
-        local_graph = neighbor_filter(graph_copy, neighbors)
-        local_graph['seq_embedding'] = peptide.seq_embedding
-        local_graph['label'] = f'{chain}_{start}_{end}'
-        local_graph.y = peptide.hdx_value
+def rescale(data):
+    data_max = np.max(data, axis=0)
+    data_min = np.min(data, axis=0)
+    
+    # Avoid division by zero for constant columns by setting 0/0 to 0 directly
+    range = np.where(data_max - data_min == 0, 1, data_max - data_min)
+    
+    rescaled_data = (data - data_min) / range
+    rescaled_data = np.nan_to_num(rescaled_data, nan=0.0)
+    
+    return rescaled_data
 
-        graph_ensemble.append(local_graph)
-    return graph_ensemble
+def attach_node_attributes(G, embedding_file):
+    embedding_data = torch.load(embedding_file)
+    protein_embedding = rescale(embedding_data['embedding'].detach().numpy())
 
-def create_graph(pep_registry, matrix, nfeatures):
-    edge_index = []
-    edge_attr = []
-    n = matrix.shape[0]
-    embedding = torch.zeros((n, nfeatures), dtype=torch.float32) # may include multiple chains, n = total(peptides)
-    range_mtx = torch.zeros((n, 2), dtype=torch.int)
-    index_dict = {}
-    pdist = torch.nn.PairwiseDistance(p=2)
+    for i, node in enumerate(G.nodes()):
+        embedding = protein_embedding[i]
+        G.nodes[node]['x'] = torch.tensor(embedding, dtype = torch.float32)
 
-    for i in range(n):
-        edges = [[i, j] for j, val in enumerate(matrix[i]) if val == 1]
-        xyz1 = torch.tensor([pep_registry[i].position] * len(edges))
-        xyz2 = torch.tensor([pep_registry[j].position for j, val in enumerate(matrix[i]) if val == 1])
-        d2 = pdist(xyz1, xyz2).reshape(-1)
-
-        edge_index.extend(edges)
-        edge_attr.extend(d2)
-    edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
-
-    for i, pep in enumerate(pep_registry):
-        embedding[i] = pep.node_embedding
-        range_mtx[i] = torch.tensor([pep.start, pep.end])
-        index_dict[f'{pep.chain}_{pep.start}_{pep.end}'] = pep.i
-
-    edge_index = torch.tensor(edge_index, dtype=torch.int)
-    pep_graph = Data(x=embedding, edge_index = edge_index.t().contiguous(), edge_attr = edge_attr)
-
-    pep_graph.validate(raise_on_error=True)
-    return pep_graph, index_dict
+    return G
 
 class pepGraph(Dataset):
-    def __init__(self, keys, root_dir, max_len=30, nfeature = 48):
+    def __init__(self, keys, root_dir, max_len=30, nfeature = 48, distance_cutoff = 5.0):
         self.keys = keys
         self.root_dir = root_dir
         self.embedding_dir = os.path.join(root_dir, 'embedding_files')
-        self.proflex_dir = os.path.join(root_dir, 'proflex_files')
+        #self.proflex_dir = os.path.join(root_dir, 'proflex_files')
+        self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
         self.max_len = max_len
         self.nfeature = nfeature
+        self.distance_cutoff = distance_cutoff
 
     def __len__(self):
         return len(self.keys)
@@ -404,7 +408,7 @@ class pepGraph(Dataset):
     def __getitem__(self, index):
         '''
         return the graph for the index-th protein complex
-        keys format: [database_id, protein, state, match_uni, apo_identifier, chain_identifier, correction]
+        keys format: [database_id, protein, state, match_uni, apo_identifier, chain_identifier, correction, protein_chains]
         '''
         atoms._registry = {}
         res._registry = []
@@ -418,22 +422,28 @@ class pepGraph(Dataset):
         match_uni = self.keys[3][index]
         chain_identifier = self.keys[5][index]
         correction = self.keys[6][index]
-        print("processing",database_id, apo_identifier)
-            
-        proflex_fpath = os.path.join(self.proflex_dir, f'{apo_identifier}_clean_Hplus_proflexdataset')
+        protein_chains = self.keys[7][index].split(',')
+        print(protein_chains)
+
+        print("processing",database_id, apo_identifier)  
+
+        #proflex_fpath = os.path.join(self.proflex_dir, f'{apo_identifier}_clean_Hplus_proflexdataset')
+        pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
         target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}.xlsx')
-        embedding_fpath = [os.path.join(self.embedding_dir, f'{apo_identifier}_{chain}.embedding.txt') for chain in chain_identifier]
+        embedding_fpath = os.path.join(self.embedding_dir, f'{apo_identifier}.pt')
         
-        if not os.path.isfile(proflex_fpath):
-            print("cannot find proflex file: ", proflex_fpath)
-            return None 
-        elif not os.path.isfile(target_HDX_fpath):
+        #if not os.path.isfile(proflex_fpath):
+        #    print("cannot find proflex file: ", proflex_fpath)
+        #    return None 
+        if not os.path.isfile(target_HDX_fpath):
             print("cannot find HDX table: ", target_HDX_fpath)
             return None 
-        for path in embedding_fpath:
-            if not os.path.isfile(path):
-                print("Cannot find embedding file:", path)
-                return None
+        if not os.path.isfile(embedding_fpath):
+            print("Cannot find embedding file:", embedding_fpath)
+            return None
+        if not os.path.isfile(pdb_fpath):
+            print("Cannot find pdb file:", pdb_fpath)
+            return None
 
         HDX_df = pd.read_excel(target_HDX_fpath, sheet_name='Sheet1')
         ### -------- filter HDX table ------ ####
@@ -444,38 +454,46 @@ class pepGraph(Dataset):
 
         # filter the HDX table
         HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
-        HDX_df = HDX_df.drop_duplicates(subset=['sequence', 'state', 'protein'])
+        HDX_df = HDX_df.drop_duplicates(subset=['sequence', 'state', 'protein'], keep = 'last')
         HDX_df = HDX_df[HDX_df['sequence'].str.len() < self.max_len]
+        HDX_df = HDX_df[HDX_df['%d']>0]
         HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
         HDX_df = HDX_df.reset_index(drop=True)
         print('after filtering:', HDX_df.shape)
 
-        ### -------- graph generation ------ #### 
-        linkref, ph_bonds, torsions, CA_list, natom, (hbonds, H_energy, bond_type), descritpion = \
-            read_edge(apo_identifier, proflex_fpath, H_bond_cutoff= -1.0, central_atom= 'CA') # read proflex dataset file
-        print("number of atoms:", len(atoms._registry.keys()))
-        print('max index of atom:', max(list(linkref.keys())))
-        print("number of residues:", len(res._registry))
+        # residue graph generation #
+
+        G = distance_ResGraph(pdb_fpath, distance_cutoff=self.distance_cutoff, protein_chain=protein_chains) # generate residue graph
+        G = attach_node_attributes(G, embedding_fpath)
 
         if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction): # read HDX table file
             return None
         print('read in pep numbers:', len(pep._registry))
 
-        '''
-        for atom in atoms._registry.values():
-            print(atom.i, atom.name, atom.res_cluster)
-        for residue in res._registry:
-            print(residue.i, residue.name, residue.clusters)
-        '''
+        def find_neigbhors(nodes, hop=1):
+            neigbhor_node = []
+            for node in nodes:
+                neigbhors = list(G.neighbors(node))
+                neigbhor_node.extend(neigbhors)
+            if hop > 1:
+                neigbhor_node = find_neigbhors(neigbhor_node, hop-1)
+            return neigbhor_node
+        
+        graph_ensemble = []
+        i2res_id = {data['residue_id']: node for node, data in G.nodes(data=True)}
+        for peptide in pep._registry:
+            node_ids = [i2res_id[(peptide.chain, res_id)] for res_id in peptide.clusters if (peptide.chain, res_id) in i2res_id]
+            if len(node_ids) == 0:
+                continue
+            neigbhor_node = find_neigbhors(node_ids, hop=1)
+            node_ids.extend(neigbhor_node)
+            node_ids = set(node_ids)
 
-        pep_adj = pep.get_pep_adj(linkref, ph_bonds) # obtain the adjacency matrix for peptide
+            subG = G.subgraph(node_ids).copy()
+            subG.graph['y'] = peptide.hdx_value
+            subG.graph['range'] = (peptide.start, peptide.end)
+            data = from_networkx(subG)
+            graph_ensemble.append(data)
+        label = f'{apo_identifier}_{chain_identifier}'
 
-        I = np.eye(len(pep._registry))
-        pep_adj = pep_adj + I # node self-connection
-        pep.get_pep_feature(embedding_fpath)
-
-        label = f'{apo_identifier}'
-        graph, index_dict = create_graph(pep._registry, pep_adj, self.nfeature) # create graph for the protein complex
-        graph_emsemble = search_local_graph(graph) # add local graph for each peptide
-
-        return label, graph_emsemble, index_dict
+        return graph_ensemble, label

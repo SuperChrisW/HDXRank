@@ -7,11 +7,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
+import comet_ml
+from comet_ml import Experiment
+from comet_ml.integration.pytorch import log_model
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
-from pepGraph_model import MixGCNBiLSTM, GCN
+from pepGraph_model import MixGCNBiLSTM, GNN_v2
 from pepGraph_BiLSTM import BiLSTM
 
 import pandas as pd
@@ -19,11 +23,11 @@ import numpy as np
 from tqdm import tqdm
 from pdb2sql import interface
 
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
+from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from pepGraph_utlis import seq_embedding, neighbor_search, neighbor_filter
-from accelerate import Accelerator
 
 def prepare_data(root_dir, embedding_file, pepGraph_fname, pdb, chain,
                  database_id, protein, state, correction_value=0):
@@ -111,82 +115,78 @@ def data(hdx_df, root_dir):
         input_data.extend(pepGraph_data)
     return input_data
 
-def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn):
+def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment):
+    model.reset_parameters()
+
     rp_train = []
     rmse_train_list = []
-    rp_val = []
-    rmse_val_list = []
-
+    best_val_loss = float('inf')
     for epoch in range(num_epochs):
         list1_train = []
         list2_train = []
         epoch_train_losses = []
 
-        list1_val = []
-        list2_val = []
-        epoch_val_losses = []
         model.train()
         for graph_batch in train_loader:
             graph_batch.to(device)
             targets = graph_batch.y.to(dtype=torch.float32)
             outputs = model(graph_batch)
 
-            outputs = outputs.squeeze(-1).to(dtype = torch.float32)
+            outputs = outputs.to(dtype = torch.float32)
             train_loss = loss_fn(outputs, targets)
 
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
 
-            epoch_train_losses.append(train_loss.data.cpu().numpy())
-
-            targets = targets.data.cpu().numpy()
-            outputs = outputs.data.cpu().numpy()
+            epoch_train_losses.append(train_loss.item())
+            targets = targets.detach().cpu()
+            outputs = outputs.detach().cpu()
             list1_train=np.append(list1_train,targets)
             list2_train=np.append(list2_train,outputs)
 
-        model.eval()
-        with torch.no_grad():
-            val_loss = 0
-            for graph_batch in val_loader:
-                graph_batch.to(device)
-                targets = graph_batch.y.to(dtype=torch.float32)
-                outputs = model(graph_batch)
-
-                outputs = outputs.squeeze(-1).to(dtype = torch.float32)
-                outputs = outputs.to(dtype = torch.float32)
-                val_loss = loss_fn(outputs, targets)
-
-                targets=targets.data.cpu().numpy()
-                outputs=outputs.data.cpu().numpy()
-                list1_val=np.append(list1_val,targets)
-                list2_val=np.append(list2_val,outputs)
-
-                epoch_val_losses.append(val_loss.data.cpu().numpy())
-
-        epoch_train_losses = np.mean(np.array(epoch_train_losses))
-        epoch_val_losses = np.mean(np.array(epoch_val_losses))
-
+        epoch_train_losses = np.mean(epoch_train_losses)
         epoch_rp_train = np.corrcoef(list2_train, list1_train)[0,1]
-        epoch_rp_val = np.corrcoef(list2_val, list1_val)[0,1]
-
         rp_train.append(np.mean(epoch_rp_train))
-        rp_val.append(np.mean(epoch_rp_val))
 
         x = np.array(list1_train).reshape(-1,1)
         y = np.array(list2_train).reshape(-1,1)
         epoch_train_rmse= np.sqrt(((y - x) ** 2).mean())
         rmse_train_list.append(epoch_train_rmse)
-        x = np.array(list1_val).reshape(-1,1)
-        y = np.array(list2_val).reshape(-1,1)
-        epoch_val_rmse= np.sqrt(((y - x) ** 2).mean())
-        rmse_val_list.append(epoch_val_rmse)
 
-        print('Epoch  Train Loss  Val Loss  PCC Train  PCC Val  Train RMSE  Val RMSE')
-        print("{:5d}  {:10.3f}  {:9.3f}  {:9.3f}  {:8.3f}  {:10.3f}  {:9.3f}".format(
-        epoch, epoch_train_losses, epoch_val_losses, epoch_rp_train, epoch_rp_val, epoch_train_rmse, epoch_val_rmse))
+        print('Epoch  Train Loss  PCC Train  Train RMSE')
+        print("{:5d}  {:10.3f}  {:9.3f}  {:10.3f}".format(
+        epoch, epoch_train_losses, epoch_rp_train, epoch_train_rmse))
 
-    return rmse_train_list, rmse_val_list, rp_train, rp_val
+        experiment.log_metric('train_loss', epoch_train_losses, step = epoch)
+        experiment.log_metric('train_pcc', epoch_rp_train, step = epoch)
+        experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
+
+        ### validation and early-stopping
+        if (epoch+1) % 5 == 0:
+            model.eval()
+            epoch_val_losses = []
+            with torch.no_grad():
+                for graph_batch in val_loader:
+                    graph_batch.to(device)
+                    targets = graph_batch.y.to(dtype=torch.float32)
+                    outputs = model(graph_batch)
+
+                    val_loss = loss_fn(outputs, targets)
+                    epoch_val_losses.append(val_loss.item())
+                val_losses_mean = np.mean(epoch_val_losses)
+                experiment.log_metric('val_loss', val_losses_mean, step = epoch)
+
+            if val_losses_mean < best_val_loss:
+                best_val_loss = val_losses_mean
+                trigger_times = 0
+            else:
+                trigger_times += 1
+                if trigger_times >= 15:
+                    print('Early stopping')
+                    break
+
+    return rmse_train_list, rp_train
 
 def test_model(model, test_loader, device):
     y_pred = []
@@ -196,7 +196,7 @@ def test_model(model, test_loader, device):
         graph_batch.to(device)
         targets = graph_batch.y.to(dtype=torch.float32)
         outputs = model(graph_batch)
-        outputs = outputs.squeeze(-1).to(dtype = torch.float32)
+        outputs = outputs.to(dtype = torch.float32)
 
         y_pred.append(outputs.cpu().detach().numpy())
         y_true.append(targets.cpu().detach().numpy())
@@ -204,8 +204,8 @@ def test_model(model, test_loader, device):
     y_true = np.concatenate(y_true, axis=0)
     return y_true, y_pred
 
-if __name__ == "__main__":
 
+def main(config):
     ##################################### initial setting ##################################### 
     root_dir = "/home/lwang/AI-HDX-main/HDX_MS_dataset/database_collection/feature"
     summary_HDX_file = f'{root_dir}/merged_data.xlsx'
@@ -213,12 +213,17 @@ if __name__ == "__main__":
     hdx_df = hdx_df.dropna(subset=['chain_identifier'])
 
     pepGraph_dir = os.path.join(root_dir, 'graph_ensemble')
-    result_dir = '/home/lwang/models/HDX_LSTM/results/temp'
+    result_dir = '/home/lwang/models/HDX_LSTM/results/240304_modelcompare/BiLSTM_48feat'
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
     ##################################### initial setting ##################################### 
-    
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    experiment = Experiment(
+        api_key="yvWYrZuk8AhNnXgThBrgGChY4",
+        project_name="train_BiLSTM",
+        workspace="superchrisw"
+    )
+    experiment.log_parameters(config)
 
     ### data preparation ###
     apo_input = []
@@ -238,64 +243,109 @@ if __name__ == "__main__":
 
     ### model initialization ###
     args = {'in_dim': 48, 'final_hidden_dim': 48,
-        'seq_dim': 10, 'struc_dim': 10, 'evo_dim': 10, 'time_dim': 5,
-        'num_hidden_channels': 10, 'num_out_channels': 20, 
-        'GNN_out_dim': 16, 'GNN_hidden_dim': 16,
-        'drop_out': 0.3, 'num_GNN_layers': 2, 'GNN_type': 'GraphSAGE'}
-    Mix_model = GCN(args).to(device)
+            'seq_dim': 10, 'struc_dim': 10, 'evo_dim': 10, 'time_dim': 5,
+            'num_hidden_channels': 10, 'num_out_channels': 20, 
+            'GNN_out_dim': 16, 'GNN_hidden_dim': 16,
+            'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type']
+    }
+    Mix_model = BiLSTM(args).to(device)
     model = Mix_model
 
     ### training ###
-    num_epochs = 1
-    batch_size = 16
-    num_workers = 4
     loss_fn = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
 
-    train_apo, val_apo = train_test_split(apo_input, test_size=0.3, random_state=42)
-    train_complex, val_complex = train_test_split(complex_input, test_size=0.3, random_state=42)
+    for i in range(config['cross_validation_num']):
+        print(f'-----------------------------------------')
+        print(f'-         cross validation {i}          -')
+        print(f'-----------------------------------------')
 
-    train_set = train_apo + train_complex
-    val_set = val_apo + val_complex
-    train_loader = DataLoader(train_set, batch_size = batch_size, shuffle=True, num_workers=num_workers)
-    val_loader =  DataLoader(val_set, batch_size = batch_size, shuffle=False, num_workers=num_workers)
-    print('length of train_Set:', len(train_set))
-    print('length of val_Set:', len(val_set))
+        train_apo, val_apo = train_test_split(apo_input, test_size=0.3, random_state=42)
+        train_complex, val_complex = train_test_split(complex_input, test_size=0.3, random_state=42)
 
-    rmse_train_list, rmse_val_list, rp_train, rp_val = train_model(
-        model, num_epochs, optimizer, train_loader, val_loader, loss_fn)
+        train_set = train_apo + train_complex
+        val_set = val_apo + val_complex
+        train_loader = DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
+        val_loader =  DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
+        print('length of train_Set:', len(train_set))
+        print('length of val_Set:', len(val_set))
 
-    ### save model ###
-    torch.save(model, f'{result_dir}/model.pt')
+        rmse_train_list, rp_train, = train_model(
+            model, config['num_epochs'], optimizer, train_loader, val_loader, loss_fn, device, experiment)
 
-    # PCC Plot
-    plt.figure(figsize=(10, 6))
-    plt.plot(rp_train, label='Training PCC')
-    plt.plot(rp_val, label = 'Val PCC')
-    plt.title('Pearson Correlation Coefficient over epochs')
-    plt.ylim(0, 1)
-    plt.xlabel('Epochs')
-    plt.ylabel('PCC')
-    plt.legend()
-    plt.savefig(f'{result_dir}/pcc_plot.png')  # Save the plot as a PNG file
+        ### save model ###
+        torch.save(model, f'{result_dir}/model_{i}.pt')
 
-    # RMSE Plot
-    plt.figure(figsize=(10, 6))
-    plt.plot(rmse_train_list, label='train RMSE')
-    plt.plot(rmse_val_list, label='val RMSE')
-    plt.title('Root Mean Square Error over epochs')
-    plt.ylim(0.05, 0.2)
-    plt.xlabel('Epochs')
-    plt.ylabel('RMSE')
-    plt.legend()
-    plt.savefig(f'{result_dir}/rmse_plot.png')  # Save the plot as a PNG file
+        # PCC Plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(rp_train, label='Training PCC')
+        plt.title('Pearson Correlation Coefficient over epochs')
+        plt.ylim(0, 1)
+        plt.xlabel('Epochs')
+        plt.ylabel('PCC')
+        plt.legend()
+        plt.savefig(f'{result_dir}/pcc_plot_{i}.png')  # Save the plot as a PNG file
 
-    y_true, y_pred = test_model(model, val_loader, device)
-    plt.figure()
-    plt.scatter(y_true, y_pred, alpha=0.5)
-    plt.xlabel('Experimental HDX')
-    plt.ylabel('Predicted HDX')
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.plot([0, 1], [0, 1], '--', color='gray')
-    plt.savefig(f'{result_dir}/val_result.png')
+        # RMSE Plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(rmse_train_list, label='train RMSE')
+        plt.title('Root Mean Square Error over epochs')
+        plt.ylim(0.05, 0.2)
+        plt.xlabel('Epochs')
+        plt.ylabel('RMSE')
+        plt.legend()
+        plt.savefig(f'{result_dir}/rmse_plot_{i}.png')  # Save the plot as a PNG file
+
+        y_true, y_pred = test_model(model, val_loader, device)
+        mae = mean_absolute_error(y_true, y_pred)
+        pcc = pearsonr(y_true, y_pred)
+        spR = spearmanr(y_true, y_pred)
+        plt.figure()
+        plt.scatter(y_true, y_pred, alpha=0.5)
+        plt.xlabel('Experimental HDX')
+        plt.ylabel('Predicted HDX')
+        plt.legend(['PCC: {:.3f}'.format(pcc[0]), 'MAE: {:.3f}'.format(mae), 'spearmanR: {:.3f}'.format(spR[0])])
+        plt.xlim(0, 1)
+        plt.ylim(0, 1)
+        plt.plot([0, 1], [0, 1], '--', color='gray')
+        plt.savefig(f'{result_dir}/val_result_{i}.png')
+
+def sample_hyperparameters(search_space):
+    sampled_config = {}
+    for param, values in search_space.items():
+        sampled_config[param] = random.choice(values)
+    return sampled_config
+
+if __name__ == '__main__':
+    mode = 'training'
+
+    if mode == 'training':
+        config = {
+                'num_epochs': 100,
+                'batch_size': 16,
+                'learning_rate': 0.001,
+                'weight_decay': 5e-4,
+                'GNN_type': 'GAT',
+                'num_GNN_layers': 3,
+                'num_workers': 4,
+                'cross_validation_num': 3
+        }
+        main(config)
+
+    elif mode == 'HPO':
+        import random
+        search_space = {
+        'num_epochs': [20],
+        'batch_size': [8, 16, 32, 64],
+        'learning_rate': [0.01, 0.005, 0.001, 0.0005],
+        'weight_decay': [1e-3, 5e-4, 1e-4, 5e-5],
+        'GNN_type': ['GraphSAGE', 'GCN', 'GAT'],
+        'num_GNN_layers': [2, 3, 4, 5],
+        'num_workers': [4],
+        'cross_validation_num': [1]
+        }
+
+        num_trials = 120
+        for _ in range(num_trials):
+            sampled_config = sample_hyperparameters(search_space)
+            main(sampled_config)

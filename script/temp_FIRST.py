@@ -6,24 +6,24 @@ import pandas as pd
 import os
 import warnings
 
-root_dir = '/Users/liyao/Desktop/Tsuda_Lab/Source_code/AI-HDX-main/HDX_MS_dataset/database_collection/feature/AF_Go_complex'
-proflex_dir = f'/Users/liyao/Desktop/Tsuda_Lab/Source_code/ProFlex-master/proflex'
-hbplus_dir = '/Users/liyao/Desktop/Tsuda_Lab/Source_code/hbplus'
 
-pdb_dir = f'{root_dir}/structure/alpha-beta'
-save_dir = f'{root_dir}/proflex_files/alpha-beta'
-fail_list = []
+root_dir = '/home/lwang/models/HDX_LSTM/data/COVID_SPIKE'
+proflex_dir = f'/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/prog/ProFlex-master/proflex'
+hbplus_dir = '/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/prog/hbplus'
+
+pdb_dir = f'{root_dir}/structure'
+save_dir = f'{root_dir}/proflex_files'
+
 if os.path.isdir(save_dir) == False:
     os.mkdir(save_dir)
 
-'''
-fname = 'merged_apo.xlsx'
-apo_df = pd.read_excel(f'{root_dir}/../{fname}', sheet_name='Sheet1')
+fname = 'COVID_record.xlsx'
+apo_df = pd.read_excel(f'{root_dir}/{fname}', sheet_name='Sheet1')
 apo_df = apo_df.dropna(subset=['chain_identifier'])
-'''
 
-for i in range(1, 101):
-    pdb_fname = f'model_{i}_revised' 
+fail_list = []
+for index, row in apo_df.iterrows():
+    pdb_fname = row['apo_identifier'].strip().split('.')[0]
     print('start processing', f'{pdb_fname}.pdb')  
     
     proflex_name = f'{pdb_fname}_clean_Hplus_proflexdataset'
