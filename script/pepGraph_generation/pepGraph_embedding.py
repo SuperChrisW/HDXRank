@@ -49,7 +49,7 @@ def merge_inputs(inputs_list):
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/AI-HDX-main/HDX_MS_dataset/complexpair_dataset'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
 
     dssp_dir = os.path.join(root_dir, 'dssp_files')
     hhm_dir = os.path.join(root_dir, 'hhm_files')
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
     df = df.dropna(subset=['chain_identifier'])
     df = df.drop_duplicates(subset=['apo_identifier'])
     fail_list = []
@@ -98,7 +98,7 @@ if __name__ == "__main__":
                 rigidity_file = os.path.join(rigidity_dir, f'rigidity_{apo_pdb}.txt')
 
                 if chain_id in protein_chain:
-                    if os.path.isfile(hhm_file) and os.path.isfile(rigidity_file) and os.path.isfile(pdb_file):
+                    if os.path.isfile(hhm_file) and os.path.isfile(pdb_file):
                         protein_inputs.append(load_protein(hhm_file, rigidity_file, pdb_file, chain_id))
                     else:
                         fail_list.append((apo_pdb, chain_id))

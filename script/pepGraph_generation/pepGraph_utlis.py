@@ -126,7 +126,8 @@ class RawInputData:
 
     def construct_embedding(self):
         # construct embedding
-        embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.rigidity, self.hse), dim=1)
+        embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.hse), dim=1)
+        # 240410 delete self.rigidity from the embedding
         return embedding
     
     def merge(self, data):
@@ -347,16 +348,17 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
             'coord': ca_coord,
         }
 
-    rigidity_df = pd.read_table(rigidity_file, sep=' ', header=None)
-    rigidity_df.columns = ['residue_index', 'residue_name', 'chain_index', 'rigidity']
-    rigidity_df = rigidity_df[rigidity_df['chain_index'] == chain_id]
+    rigidity = torch.tensor([])
+    #rigidity_df = pd.read_table(rigidity_file, sep=' ', header=None)
+    #rigidity_df.columns = ['residue_index', 'residue_name', 'chain_index', 'rigidity']
+    #rigidity_df = rigidity_df[rigidity_df['chain_index'] == chain_id]
 
     max_len = len(res_seq)
-    rigidity_df = rigidity_df.iloc[:max_len]
+    #rigidity_df = rigidity_df.iloc[:max_len]
  
     # sequence label
-    res_id = rigidity_df['residue_index'].to_numpy().reshape(-1, 1)
-    res_name = rigidity_df['residue_name'].to_numpy().reshape(-1, 1)
+    #res_id = rigidity_df['residue_index'].to_numpy().reshape(-1, 1)
+    #res_name = rigidity_df['residue_name'].to_numpy().reshape(-1, 1)
 
     # sequence-based features
     res_charge = np.array([chemdata.residue_charge[protein_letters_1to3(res)] for res in res_seq]).reshape(-1, 1)
@@ -366,7 +368,7 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
     # structure-based features
     hse_dict = get_hse(model, chain_id)
     SASA = biotite_SASA(pdb_file, chain_id)[:max_len]
-    rigidity = rigidity_df['rigidity'].to_numpy().reshape(-1, 1)
+    #rigidity = rigidity_df['rigidity'].to_numpy().reshape(-1, 1)
 
     # MSA-based features
     hhm_mtx, hhm_seq = parse_hhm(hhm_file) # hhm file is chain-wise
@@ -383,13 +385,13 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
         raise ValueError('Sequence mismatch between HMM and DSSP')
 
     corrected_hse_mtx = np.zeros((max_len, 3))
-    for i, res_j in enumerate(res_id):
+    for i, res_j in enumerate(residue_data.keys()):
         res_j = str(res_j)
         if (chain_id, res_j) in hse_dict.keys():
             corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])
 
-    print('protein length:', res_id.shape[0])
-    print('rigidity length:', rigidity.shape)
+    print('protein length:', len(residue_data.keys()))
+    #print('rigidity length:', rigidity.shape)
     print('dssp length:', SASA.shape)
     print('hse length:', corrected_hse_mtx.shape)
     print('HDMD length:', HDMD.shape)

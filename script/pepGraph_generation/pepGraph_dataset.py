@@ -177,18 +177,6 @@ class pep(object):
                         print(f"Embedding matrix contains NaN values: {fpath}")
                         break
 
-
-    @classmethod
-    def set_pep_position(cls): # obtain the average position of peptide
-        for peptide in cls._registry:
-            pep_position = np.array([0,0,0], dtype = np.float32)
-            for res_index in peptide.clusters:
-                residue = res.get_res(res_index, peptide.chain)
-                pep_position += residue.position
-
-            num_residues = len(peptide.clusters)
-            peptide.position = pep_position/num_residues
-
 def read_edge(key, proflexdataset_path, H_bond_cutoff = -1.0, central_atom = 'CA'): # read the proflex dataset file and return the bonding information as edge_list
     nhb, nph = -1, -1 # index of hbonds, hydrophobic interactions
 
@@ -335,7 +323,6 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction): # read the HDX
         print("no peptide found")
         return False
     else:
-        #pep.set_pep_position() # lead to error
         return True
 
 def distance_ResGraph(pdb_file, distance_cutoff, protein_chain):
@@ -391,7 +378,7 @@ def attach_node_attributes(G, embedding_file):
     return G
 
 class pepGraph(Dataset):
-    def __init__(self, keys, root_dir, max_len=30, nfeature = 48, distance_cutoff = 5.0):
+    def __init__(self, keys, root_dir, nfeature, max_len=30, distance_cutoff = 5.0):
         self.keys = keys
         self.root_dir = root_dir
         self.embedding_dir = os.path.join(root_dir, 'embedding_files')
@@ -425,7 +412,7 @@ class pepGraph(Dataset):
         protein_chains = self.keys[7][index].split(',')
         print(protein_chains)
 
-        print("processing",database_id, apo_identifier)  
+        print("processing",database_id, apo_identifier)
 
         #proflex_fpath = os.path.join(self.proflex_dir, f'{apo_identifier}_clean_Hplus_proflexdataset')
         pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
@@ -485,6 +472,15 @@ class pepGraph(Dataset):
             node_ids = [i2res_id[(peptide.chain, res_id)] for res_id in peptide.clusters if (peptide.chain, res_id) in i2res_id]
             if len(node_ids) == 0:
                 continue
+
+            logt_vec = torch.full((len(node_ids), 1), peptide.log_t, dtype=torch.float32)
+            seqlen_vec = torch.full((len(node_ids), 1), len(node_ids)/self.max_len, dtype=torch.float32)
+            seq_embedding = [G.nodes[node]['x'] for node in node_ids]
+            seq_embedding = torch.stack(seq_embedding, dim=0)
+            seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], logt_vec, seqlen_vec), dim=1)
+            pad_needed = self.max_len - len(node_ids)
+            seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
+
             neigbhor_node = find_neigbhors(node_ids, hop=1)
             node_ids.extend(neigbhor_node)
             node_ids = set(node_ids)
@@ -492,8 +488,10 @@ class pepGraph(Dataset):
             subG = G.subgraph(node_ids).copy()
             subG.graph['y'] = peptide.hdx_value
             subG.graph['range'] = (peptide.start, peptide.end)
+            subG.graph['chain'] = peptide.chain
+            subG.graph['seq_embedding'] = seq_embedding
             data = from_networkx(subG)
             graph_ensemble.append(data)
-        label = f'{apo_identifier}_{chain_identifier}'
+        label = f'{apo_identifier}'
 
         return graph_ensemble, label

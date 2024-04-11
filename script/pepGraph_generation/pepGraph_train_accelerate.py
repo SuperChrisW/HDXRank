@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 from pepGraph_utlis import seq_embedding, neighbor_search, neighbor_filter
 
 def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, accelerator, experiment, result_dir, data_log = True):
-    #model.reset_parameters()
+    model.reset_parameters()
     rp_train = []
     rmse_train_list = []
     best_val_loss = float('inf')
@@ -42,7 +42,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
 
         model.train()
         for graph_batch in train_loader:
-            targets = graph_batch.y.unsqueeze(-1)
+            targets = graph_batch.y
             outputs = model(graph_batch)
             train_loss = loss_fn(outputs, targets)
 
@@ -56,7 +56,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             list1_train=np.append(list1_train,targets)
             list2_train=np.append(list2_train,outputs)
 
-        accelerator.wait_for_everyone()
+        #accelerator.wait_for_everyone()
         if accelerator.is_main_process:
             epoch_train_losses = np.mean(epoch_train_losses)
             epoch_rp_train = np.corrcoef(list2_train, list1_train)[0,1]
@@ -82,7 +82,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             epoch_val_losses = []
             with torch.no_grad():
                 for graph_batch in val_loader:
-                    targets = graph_batch.y.unsqueeze(-1)
+                    targets = graph_batch.y
                     outputs = model(graph_batch)
 
                     all_predictions, all_targets = accelerator.gather_for_metrics((outputs, targets))
@@ -101,7 +101,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 accelerator.save_model(model, f'{result_dir}/best_model.pt')
             else:
                 trigger_times += 1
-                if trigger_times >= 5:
+                if trigger_times >= 3:
                     print('Early stopping')
                     break
 
@@ -123,12 +123,12 @@ def test_model(model, test_loader):
 
 def main(training_args):
     ##################################### initial setting ##################################### 
-    root_dir = "/home/lwang/AI-HDX-main/HDX_MS_dataset/full_dataset"
-    summary_HDX_file = f'{root_dir}/merged_data.xlsx'
+    root_dir = "/home/lwang/models/HDX_LSTM/data/Fullset"
+    summary_HDX_file = f'{root_dir}/merged_data_oldVer.xlsx'
     hdx_df = pd.read_excel(summary_HDX_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['chain_identifier'])
 
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble', training_args['graph_hop'])
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble')
     result_dir = training_args['result_dir']
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
@@ -144,7 +144,7 @@ def main(training_args):
             pepGraph_ensemble = torch.load(pepGraph_file)
             if row['complex_state'] == 'single':
                 apo_input.extend(pepGraph_ensemble)
-            elif row['complex_state'] == 'complex':
+            else:
                 complex_input.extend(pepGraph_ensemble)
         else:
             continue
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     accelerator = Accelerator()
     device = accelerator.device
     config = {
-            'num_epochs': 3,
+            'num_epochs': 300,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
@@ -249,15 +249,15 @@ if __name__ == "__main__":
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
 
-            'feat_in_dim': 45, 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'feat_in_dim': 44, 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
             'GNN_out_dim': 16, 'LSTM_out_dim': 16,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
-            'result_dir': '/home/lwang/models/HDX_LSTM/results/240402_BiLSTMGAT_v2',
-            'data_log': False
+            'result_dir': '/home/lwang/models/HDX_LSTM/results/240411_BiLSTMGAT_v2_1',
+            'data_log': True
     }
 
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
@@ -267,7 +267,9 @@ if __name__ == "__main__":
         project_name="CoolHdx_project",
         workspace="superchrisw"
     )
+   
     if training_args['data_log']:
         experiment.log_parameters(config)
 
+    #experiment = ''
     main(training_args)

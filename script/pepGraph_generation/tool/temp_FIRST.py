@@ -18,11 +18,12 @@ if os.path.isdir(save_dir) == False:
     os.mkdir(save_dir)
 
 fname = 'COVID_record.xlsx'
-apo_df = pd.read_excel(f'{root_dir}/{fname}', sheet_name='Sheet1')
-apo_df = apo_df.dropna(subset=['chain_identifier'])
+df = pd.read_excel(f'{root_dir}/{fname}', sheet_name='Sheet1')
+df = df.dropna(subset=['chain_identifier'])
+df = df[df['state'] == 'VH16_VL104']
 
 fail_list = []
-for index, row in apo_df.iterrows():
+for index, row in df.iterrows():
     pdb_fname = row['apo_identifier'].strip().split('.')[0]
     print('start processing', f'{pdb_fname}.pdb')  
     

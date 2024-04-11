@@ -11,12 +11,12 @@ import torch
 from tqdm import tqdm
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/HDX_LSTM/data/COVID_SPIKE'
-    save_dir = f'{root_dir}/graph_ensemble/v2_ensemble'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
+    save_dir = f'{root_dir}/graph_ensemble'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/COVID_record.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
     df = df.dropna(subset=['chain_identifier'])
     apo_identifier = df['apo_identifier'].astype(str).unique()
 
@@ -49,7 +49,7 @@ if __name__ == '__main__':
     print('total number of keys:', len(database_id))
     print(len(apo_identifier))
 
-    graph_dataset = pepGraph(keys, root_dir)
+    graph_dataset = pepGraph(keys, root_dir, nfeature = 44)
     count = 0
     progress = tqdm(enumerate(graph_dataset), total=len(graph_dataset))
     for i, data in progress:
