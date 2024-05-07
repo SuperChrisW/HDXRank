@@ -1,5 +1,3 @@
-import argparse
-import pickle
 import os
 import numpy as np
 import pandas as pd
@@ -11,12 +9,12 @@ import torch
 from tqdm import tqdm
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/S3214dataset'
-    save_dir = f'{root_dir}/graph_ensemble'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
+    save_dir = f'{root_dir}/graph_ensemble_GearNet'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/myoglobin_record.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
     df = df.dropna(subset=['chain_identifier'])
     apo_identifier = df['apo_identifier'].astype(str).unique()
 
@@ -35,7 +33,6 @@ if __name__ == '__main__':
         temp_correction = temp_df['correction_value'].astype(int).to_list()
         temp_uni = temp_df['match_uni'].astype(str).to_list()
         temp_protein_chains= temp_df['protein_chain'].astype(str).to_list()
-        print(temp_apo, temp_protein_chains)
 
         protein.append(temp_protein)
         state.append(temp_state)
@@ -50,7 +47,7 @@ if __name__ == '__main__':
     print('total number of keys:', len(database_id))
     print(len(apo_identifier))
 
-    graph_dataset = pepGraph(keys, root_dir, nfeature = 44, distance_cutoff = 10.0,
+    graph_dataset = pepGraph(keys, root_dir, nfeature = 44, min_distance = 5.0, max_distance = 10.0,
                              truncation_window_size = None) # distance cutoff: distance between CA atoms, consider 10 or 15
     
     count = 0
@@ -62,6 +59,7 @@ if __name__ == '__main__':
         path = f'{save_dir}/{label}.pt'
         torch.save(graph_ensemble, path)
         count += len(graph_ensemble)
+        break
     print(count)
 
 

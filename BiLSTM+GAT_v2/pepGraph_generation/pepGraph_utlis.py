@@ -5,10 +5,8 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn.functional as F
-from pdb2sql import interface
 from tool.BioWrappers import *
 from dataclasses import dataclass, field
-from Bio.PDB.Polypeptide import one_to_three as protein_letters_1to3, three_to_one as protein_letters_3to1
 from Bio.PDB import Selection
 
 import time
@@ -34,6 +32,14 @@ class ChemData():
             'LEU','LYS','MET','PHE','PRO',
             'SER','THR','TRP','TYR','VAL',]
         
+        self.three_to_one = {
+                'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D', 'CYS': 'C',
+                'GLN': 'Q', 'GLU': 'E', 'GLY': 'G', 'HIS': 'H', 'ILE': 'I',
+                'LEU': 'L', 'LYS': 'K', 'MET': 'M', 'PHE': 'F', 'PRO': 'P',
+                'SER': 'S', 'THR': 'T', 'TRP': 'W', 'TYR': 'Y', 'VAL': 'V',
+            }
+        self.one_to_three = {v: k for k, v in self.three_to_one.items()}
+
         self.num2aa=[
             'ALA','ARG','ASN','ASP','CYS',
             'GLN','GLU','GLY','HIS','ILE',
@@ -208,13 +214,6 @@ def seq_embedding(HDX_dataframe, vector_file, pdb_file, protein, state, chain,
 
     # keep only the contact residues between chains
     # db -> pdb2sql database
-    if 'contact' in filter:
-        db = interface(pdb_file)
-        cutoff = 8.5
-        res_contact_pairs = db.get_contact_residues(
-                cutoff=cutoff, return_contact_pairs=True)
-        df, keys_to_pop = contact_filter(res_contact_pairs, chain, df)
-        print(f"Removed {len(keys_to_pop)} no-contact peptides by distance filter {cutoff}A.")
 
     if 'unique' in filter:
         df = df.drop_duplicates(subset=['start', 'end'], keep='last')
@@ -226,7 +225,7 @@ def seq_embedding(HDX_dataframe, vector_file, pdb_file, protein, state, chain,
 
     # read embedding file
     embed_dict, embed_array, embed_seq = load_embedding(vector_file, feat_rescale=False)
-    embed_seq = [protein_letters_3to1(res) for res in embed_seq]
+    embed_seq = [chemdata.three_to_one[res] for res in embed_seq]
 
     row_size = len(start_pos)
     nfactor = embed_array.shape[-1] + 3
@@ -285,7 +284,7 @@ def contact_filter(res_contact_pairs, chain, df):
     return df, keys_to_pop
 
 def get_seq_polarity(seq):
-    encode_index = [chemdata.polarity_encoding[chemdata.residue_polarity[protein_letters_1to3(res)]] for res in seq]
+    encode_index = [chemdata.polarity_encoding[chemdata.residue_polarity[chemdata.one_to_three[res]]] for res in seq]
     polarity_mtx = np.zeros((len(seq), 4))
     for i, idx in enumerate(encode_index):
         polarity_mtx[i, idx] = 1
@@ -341,7 +340,7 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
         res_name = res.get_resname()
 
         if res_name in chemdata.STDAAS:
-            res_seq.append(protein_letters_3to1(res_name))
+            res_seq.append(chemdata.three_to_one[res_name])
         else:
             print(f'Non-standard AA found: {res_name}')
 
@@ -360,7 +359,7 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
     max_len = len(res_seq)
 
     # sequence-based features
-    res_charge = np.array([chemdata.residue_charge[protein_letters_1to3(res)] for res in res_seq]).reshape(-1, 1)
+    res_charge = np.array([chemdata.residue_charge[chemdata.one_to_three[res]] for res in res_seq]).reshape(-1, 1)
     res_polarity = get_seq_polarity(res_seq)
     HDMD = np.array([chemdata.AA_array[res] for res in res_seq]).reshape(-1, 5)
     end_time = time.time()
