@@ -50,8 +50,8 @@ if __name__ == '__main__':
     print('total number of keys:', len(database_id))
     print(len(apo_identifier))
 
-    graph_dataset = pepGraph(keys, root_dir, nfeature = 44, distance_cutoff = 5.0,
-                             truncation_window_size = 16) # distance cutoff: distance between CA atoms, consider 10 or 15
+    graph_dataset = pepGraph(keys, root_dir, nfeature = 44, distance_cutoff = 10.0,
+                             truncation_window_size = None) # distance cutoff: distance between CA atoms, consider 10 or 15
     
     count = 0
     progress = tqdm(enumerate(graph_dataset), total=len(graph_dataset))

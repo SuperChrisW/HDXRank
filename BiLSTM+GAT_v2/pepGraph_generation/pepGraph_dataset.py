@@ -9,11 +9,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from torch_geometric.utils import from_networkx
+import torchdrug as td
+from torchdrug import data, layers
+from torchdrug.data import Protein
 
 from Bio.PDB.Polypeptide import protein_letters_3to1
 from Bio.PDB import PDBParser, Selection
 
-from pepGraph_utlis import load_embedding, neighbor_search, neighbor_filter
+from pepGraph_utlis import load_embedding
 
 
 class atoms(object):
@@ -325,7 +328,7 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction): # read the HDX
     else:
         return True
 
-def distance_ResGraph(pdb_file, distance_cutoff, protein_chain):
+def distance_ResGraph(pdb_file, embedding_file, distance_cutoff = 10.0, protein_chain = ['A']): # create networkx and torchdrug graphs
     parser = PDBParser()
     structure = parser.get_structure('PDB_structure', pdb_file)
     # Filtering by protein_chain (assuming protein_chain can be a string or a list)
@@ -335,12 +338,36 @@ def distance_ResGraph(pdb_file, distance_cutoff, protein_chain):
         chains = [chain for chain in structure.get_chains() if chain.id in protein_chain]
     print('chains:', chains)
     residues = Selection.unfold_entities(chains, 'R')
+
     G = nx.Graph()
+    residue_type = []
+    residue_coords= []
+    residue_ids = []
+    chain_ids = []
     for i, residue in enumerate(residues):
         residue_id = (residue.get_parent().id, residue.id[1])  # Tuple of (chain ID, residue ID)
         G.add_node(i, residue_id=residue_id)
-        res(residue.id[1], residue.get_resname(), residue.get_parent().id, residue['CA'].coord)
+
+        res_name = residue.get_resname()
+        residue_type.append(data.Protein.residue2id[res_name] if res_name in data.Protein.residue2id else 20)
+        residue_coords.append(residue['CA'].coord)
+        residue_ids.append(residue.id[1])
+        chain_ids.append(protein_chain.index(residue.get_parent().id))
     
+    atoms = ['CA'] * len(residue_type)
+    atom_type = [data.Protein.atom_name2id[atom] for atom in atoms]
+    edge_list = [(i, i+1, 0) for i in range(len(residues)-1)]
+    bond_type = [0] * len(edge_list)
+
+    embedding_data = torch.load(embedding_file)
+    protein_embedding = rescale(embedding_data['embedding'].detach().numpy())
+    protein_embedding = torch.tensor(protein_embedding, dtype=torch.float32)
+
+    protein = Protein(edge_list = edge_list, atom_type = atom_type, bond_type = bond_type, residue_type = residue_type, view = 'residue',
+                      residue_feature = protein_embedding[:len(residue_type)], residue_number = residue_ids, chain_id = chain_ids)
+    with protein.node():
+        protein.node_position = torch.tensor(residue_coords, dtype=torch.float32)
+
     # Add edges based on the distance cutoff
     for i, residue1 in enumerate(residues):
         for j, residue2 in enumerate(residues):
@@ -353,7 +380,7 @@ def distance_ResGraph(pdb_file, distance_cutoff, protein_chain):
                     G.add_edge(i, j, edge_attr=torch.tensor([distance]))
             except KeyError: # Skip residues without a 'CA' atom
                 continue
-    return G
+    return G, protein
 
 def rescale(data):
     data_max = np.max(data, axis=0)
@@ -366,16 +393,6 @@ def rescale(data):
     rescaled_data = np.nan_to_num(rescaled_data, nan=0.0)
     
     return rescaled_data
-
-def attach_node_attributes(G, embedding_file):
-    embedding_data = torch.load(embedding_file)
-    protein_embedding = rescale(embedding_data['embedding'].detach().numpy())
-
-    for i, node in enumerate(G.nodes()):
-        embedding = protein_embedding[i]
-        G.nodes[node]['x'] = torch.tensor(embedding, dtype = torch.float32)
-
-    return G
 
 class pepGraph(Dataset):
     def __init__(self, keys, root_dir, nfeature, max_len=30, distance_cutoff = 5.0 , truncation_window_size = None):
@@ -418,14 +435,10 @@ class pepGraph(Dataset):
             print('skip')
             return None
 
-        #proflex_fpath = os.path.join(self.proflex_dir, f'{apo_identifier}_clean_Hplus_proflexdataset')
         pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
         target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}.xlsx')
         embedding_fpath = os.path.join(self.embedding_dir, f'{apo_identifier}.pt')
         
-        #if not os.path.isfile(proflex_fpath):
-        #    print("cannot find proflex file: ", proflex_fpath)
-        #    return None 
         if not os.path.isfile(target_HDX_fpath) and self.truncation_window_size is None:
             print("cannot find HDX table: ", target_HDX_fpath)
             return None 
@@ -437,8 +450,7 @@ class pepGraph(Dataset):
             return None
 
         # residue graph generation #
-        G = distance_ResGraph(pdb_fpath, distance_cutoff=self.distance_cutoff, protein_chain=protein_chains) # generate residue graph
-        G = attach_node_attributes(G, embedding_fpath)
+        G, protein = distance_ResGraph(pdb_fpath, embedding_fpath, distance_cutoff=self.distance_cutoff, protein_chain=protein_chains) # generate residue graph
 
         if self.truncation_window_size is None:
             HDX_df = pd.read_excel(target_HDX_fpath, sheet_name='Sheet1')
@@ -513,13 +525,23 @@ class pepGraph(Dataset):
             node_ids.extend(neigbhor_node)
             node_ids = set(node_ids)
 
-            subG = G.subgraph(node_ids).copy()
-            subG.graph['y'] = peptide.hdx_value
-            subG.graph['range'] = (peptide.start, peptide.end)
-            subG.graph['chain'] = peptide.chain
-            subG.graph['seq_embedding'] = seq_embedding
-            data = from_networkx(subG)
-            graph_ensemble.append(data)
+            #subG = G.subgraph(node_ids).copy()
+            subG = protein.subresidue(node_ids).copy() #FIXME: 
+
+            with subG.graph():
+                subG.y = peptide.hdx_value
+                subG.range = (peptide.start, peptide.end)
+                subG.chain = peptide.chain
+                subG.seq_embedding = seq_embedding
+            graph_ensemble.append(subG)
+
+        graph_construction_model = layers.GraphConstruction(node_layers = [layers.geometry.AlphaCarbonNode()],
+                                                    edge_layers = [layers.geometry.SpatialEdge(radius=10.0, min_distance = 5),
+                                                                    layers.geometry.KNNEdge(k=10, min_distance = 5),
+                                                                    layers.geometry.SequentialEdge(max_distance = 2)],
+                                                    edge_feature = 'gearnet')
+        graph_ensemble = data.Protein.pack(graph_ensemble)
+        graph_ensemble = graph_construction_model(graph_ensemble)
         label = f'{apo_identifier}'
 
         return graph_ensemble, label
