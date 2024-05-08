@@ -9,6 +9,8 @@ from torch.utils.data import Dataset
 from torch_geometric.data import HeteroData
 from torch_cluster import knn_graph, radius_graph
 
+from torchdrug import data
+
 from Bio.PDB.Polypeptide import protein_letters_3to1
 from Bio.PDB import PDBParser, Selection
 
@@ -139,7 +141,8 @@ def ResGraph(pdb_file, embedding_file, protein_chain = ['A']): # create networkx
     G = nx.MultiGraph()
     for i, residue in enumerate(residues):
         nodes_with_attributes = [
-            (i, {"res_name": residue.get_resname(), "residue_coord":residue['CA'].coord, "residue_id": residue.id[1], 'chain_id': protein_chain.index(residue.get_parent().id)})
+            (i, {"res_name": residue.get_resname(), "residue_coord":residue['CA'].coord, 
+                 "residue_id": residue.id[1], 'chain_id': protein_chain.index(residue.get_parent().id)})
         ]
         G.add_nodes_from(nodes_with_attributes)
         res(i, residue.get_resname(), protein_chain.index(residue.get_parent().id), residue['CA'].coord)
@@ -147,7 +150,55 @@ def ResGraph(pdb_file, embedding_file, protein_chain = ['A']): # create networkx
     G = attach_node_attributes(G, embedding_file)
     return G
 
-def networkx_to_HeteroG(subG):
+def add_edges(G, max_distance=10, min_distance=5):
+    node_coord = [G.nodes[i]['residue_coord'] for i in G.nodes]
+    node_coord = torch.tensor(node_coord, dtype = torch.float32)
+    batch = torch.tensor([0] * len(G.nodes))
+
+    # add radius edges
+    edge_index = radius_graph(node_coord, r=max_distance, batch=batch, loop=False)
+    edge_list = edge_index.t().tolist()
+    for u, v in edge_list:
+        G.add_edge(u, v, edge_type='radius_edge')
+    print('add radius edges:', G.number_of_edges())
+
+    # add knn edges
+    edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
+    edge_list = edge_index.t().tolist()
+    for u, v in edge_list:
+        G.add_edge(u, v, edge_type='knn_edge')
+    print('add knn edges:', G.number_of_edges())
+
+    # remove edges with distance smaller than min_distance
+    edges_to_remove = []
+    for u, v in G.edges():
+        u_coord = torch.tensor(G.nodes[u]['residue_coord'], dtype = torch.float32)
+        v_coord = torch.tensor(G.nodes[v]['residue_coord'], dtype = torch.float32)
+        distance = torch.norm(u_coord - v_coord, dim=0)
+        if distance < min_distance:
+            if (u,v) not in edges_to_remove:
+                edges_to_remove.append((u, v))
+    G.remove_edges_from(edges_to_remove)
+    print('after removing edges:', G.number_of_edges())
+
+    # add sequential edges
+    i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
+    for node in G.nodes:
+        res_id = G.nodes[node]['residue_id']
+        chain = G.nodes[node]['chain_id']
+        if (chain,res_id+1) in i2res_id.keys():
+            G.add_edge(node, node+1, edge_type='forward_1_edge')
+        if (chain,res_id+2) in i2res_id.keys():
+            G.add_edge(node, node+2, edge_type='forward_2_edge')
+        if (chain,res_id-1) in i2res_id.keys():
+            G.add_edge(node, node-1, edge_type='backward_1_edge')
+        if (chain,res_id-2) in i2res_id.keys():
+            G.add_edge(node, node-2, edge_type='backward_2_edge')
+        G.add_edge(node, node, edge_type='self_edge')
+    print('add sequential edges:', G.number_of_edges())
+    return G
+
+def networkx_to_HeteroG(subG): # convert to pytorch geometric HeteroData
     data = HeteroData()
 
     for node, node_attr in subG.nodes(data=True):
@@ -176,6 +227,52 @@ def networkx_to_HeteroG(subG):
         data['residue'].seq_embedding = torch.tensor(subG.graph['seq_embedding'], dtype=torch.float32)
 
     return data
+
+def networkx_to_tgG(G): # convert to torchdrug protein graph
+    node_position = torch.as_tensor([G.nodes[node]['residue_coord'] for node in G.nodes()], dtype=torch.float32)
+    num_atom = G.number_of_nodes()
+    atom_type = ['CA'] * num_atom # CA - 1
+    atom_type = torch.as_tensor([data.Protein.atom_name2id.get(atom, -1) for atom in atom_type])
+
+    residue_type = []
+    residue_feature = []
+    residue_id = []
+    id_map = {}
+    for i, (node, attrs) in enumerate(G.nodes(data=True)):
+        if node not in id_map.keys():
+            id_map[node] = i
+        residue_type.append(data.Protein.residue2id.get(attrs['res_name'], 0))
+        residue_feature.append(attrs['x'])
+        residue_id.append(attrs['residue_id'])
+    residue_type = torch.tensor(residue_type, dtype=torch.long)
+    residue_feature = torch.stack(residue_feature)
+    atom2residue = torch.as_tensor([id_map[node] for node in G.nodes()], dtype=torch.long)
+
+    edge_list = []
+    bond_type = []
+    edge_type_list = ['radius_edge', 'knn_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge', 'self_edge']
+    for u, v, attrs in G.edges(data=True):
+        edge_type = attrs['edge_type']
+        u = id_map[u]
+        v = id_map[v]
+        if edge_type in edge_type_list:
+            edge_list.append([u, v, edge_type_list.index(edge_type)])
+            bond_type.append(edge_type_list.index(edge_type))
+
+    edge_list = torch.tensor(edge_list, dtype=torch.long)
+    bond_type = torch.tensor(bond_type, dtype=torch.long).unsqueeze(-1)
+
+    protein = data.Protein(edge_list, atom_type, bond_type, view='residue', residue_number=residue_id,
+                           node_position=node_position, atom2residue=atom2residue,residue_feature=residue_feature, 
+                           residue_type=residue_type, num_relation = len(edge_type_list))
+
+    with protein.graph():
+        protein.y = torch.tensor(G.graph['y'], dtype=torch.float32)
+        protein.range = torch.tensor(G.graph['range'], dtype=torch.float32)
+        protein.chain = torch.tensor(G.graph['chain'], dtype=torch.int64)
+        protein.seq_embedding = torch.tensor(G.graph['seq_embedding'], dtype=torch.float32)
+    
+    return protein
 
 class pepGraph(Dataset):
     def __init__(self, keys, root_dir, nfeature, max_len=30, min_distance = 5.0 , max_distance = 10.0, truncation_window_size = None):
@@ -236,51 +333,8 @@ class pepGraph(Dataset):
 
         # residue graph generation #
         G = ResGraph(pdb_fpath, embedding_fpath, protein_chain=protein_chains) # generate residue graph
-        node_coord = [G.nodes[i]['residue_coord'] for i in G.nodes]
-        node_coord = torch.tensor(node_coord, dtype = torch.float32)
-        batch = torch.tensor([0] * len(G.nodes))
-
-        # add radius edges
-        edge_index = radius_graph(node_coord, r=self.max_distance, batch=batch, loop=False)
-        edge_list = edge_index.t().tolist()
-        for u, v in edge_list:
-            G.add_edge(u, v, edge_type='radius_edge')
-        print('add radius edges:', G.number_of_edges())
-
-        # add knn edges
-        edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
-        edge_list = edge_index.t().tolist()
-        for u, v in edge_list:
-            G.add_edge(u, v, edge_type='knn_edge')
-        print('add knn edges:', G.number_of_edges())
-
-        # remove edges with distance smaller than min_distance
-        edges_to_remove = []
-        for u, v in G.edges():
-            u_coord = torch.tensor(G.nodes[u]['residue_coord'], dtype = torch.float32)
-            v_coord = torch.tensor(G.nodes[v]['residue_coord'], dtype = torch.float32)
-            distance = torch.norm(u_coord - v_coord, dim=0)
-            if distance < self.min_distance:
-                if (u,v) not in edges_to_remove:
-                    edges_to_remove.append((u, v))
-        G.remove_edges_from(edges_to_remove)
-        print('after removing edges:', G.number_of_edges())
-
-        # add sequential edges
-        i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
-        for node in G.nodes:
-            res_id = G.nodes[node]['residue_id']
-            chain = G.nodes[node]['chain_id']
-            if (chain,res_id+1) in i2res_id.keys():
-                G.add_edge(node, node+1, edge_type='forward_1_edge')
-            if (chain,res_id+2) in i2res_id.keys():
-                G.add_edge(node, node+2, edge_type='forward_2_edge')
-            if (chain,res_id-1) in i2res_id.keys():
-                G.add_edge(node, node-1, edge_type='backward_1_edge')
-            if (chain,res_id-2) in i2res_id.keys():
-                G.add_edge(node, node-2, edge_type='backward_2_edge')
-            G.add_edge(node, node, edge_type='self_edge')
-        print('add sequential edges:', G.number_of_edges())
+        G = add_edges(G, max_distance=self.max_distance, min_distance=self.min_distance)
+        print(G)
 
         if self.truncation_window_size is None:
             HDX_df = pd.read_excel(target_HDX_fpath, sheet_name='Sheet1')
@@ -337,6 +391,7 @@ class pepGraph(Dataset):
                 neigbhor_node = find_neigbhors(neigbhor_node, hop-1)
             return neigbhor_node
         
+        i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
         graph_ensemble = []
         for peptide in pep._registry:
             chain = peptide.chain
@@ -362,7 +417,7 @@ class pepGraph(Dataset):
             subG.graph['chain'] = peptide.chain
             subG.graph['seq_embedding'] = seq_embedding
             
-            data = networkx_to_HeteroG(subG)
+            data = networkx_to_tgG(subG)
             graph_ensemble.append(data)
         label = f'{apo_identifier}'
         return graph_ensemble, label

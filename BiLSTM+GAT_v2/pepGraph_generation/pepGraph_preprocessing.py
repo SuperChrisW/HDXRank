@@ -59,7 +59,6 @@ if __name__ == '__main__':
         path = f'{save_dir}/{label}.pt'
         torch.save(graph_ensemble, path)
         count += len(graph_ensemble)
-        break
     print(count)
 
 

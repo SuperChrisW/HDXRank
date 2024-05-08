@@ -8,7 +8,6 @@ from torchdrug import core, layers
 from torchdrug.core import Registry as R
 
 
-[docs]@R.register("models.GearNet")
 class GearNet(nn.Module, core.Configurable):
     """
     Geometry Aware Relational Graph Neural Network proposed in
