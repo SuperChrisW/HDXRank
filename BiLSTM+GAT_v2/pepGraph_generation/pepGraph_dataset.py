@@ -82,15 +82,15 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
         temp_HDX_df = HDX_df[(HDX_df['state']==state) & (HDX_df['protein']==protein)]
         temp_HDX_df = temp_HDX_df.sort_values(by=['start', 'end'], ascending=[True, True])
         chain = protein_chains.index(chain)
-
         print(protein, state, chain, temp_HDX_df.shape)
 
-        for i, row in temp_HDX_df.iterrows():
-            sequence = row['sequence'].strip()
-            start_pos = int(row['start'])+correction[index]
-            end_pos = int(row['end'])+correction[index]
-            hdx_value = float(row['%d'])/100
-            log_t = row['log_t']
+        HDX_grouped = temp_HDX_df.groupby(['start', 'end']) 
+        for name, group in HDX_grouped:
+            sequence = group['sequence'].iloc[0].strip()
+            start_pos = int(name[0])+correction[index]
+            end_pos = int(name[1])+correction[index]
+            hdx_value = group['%d'].mean()/100 # average of RFU
+            log_t = 0
 
             res_seq = [res for res in res_chainsplit[chain] if start_pos <= res.i+1 <= end_pos]
             pdb_seq = ''.join([protein_letters_3to1[res.name] for res in res_seq])
@@ -98,7 +98,7 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
                 print("sequence mismatch: chain:", chain, "pdb_Seq:", pdb_seq, 'HDX_seq:', sequence)
                 continue
             else:
-                peptide = pep(npep, sequence, chain, int(row['start']), int(row['end']), hdx_value, log_t) # add chain  
+                peptide = pep(npep, sequence, chain, start_pos, end_pos, hdx_value, log_t)
                 for residue in res_seq:
                     residue.clusters.append(npep)
                     peptide.clusters.append(residue.i)
@@ -346,7 +346,6 @@ class pepGraph(Dataset):
 
             # filter the HDX table
             HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
-            HDX_df = HDX_df.drop_duplicates(subset=['sequence', 'state', 'protein'], keep = 'last')
             HDX_df = HDX_df[HDX_df['sequence'].str.len() < self.max_len]
             HDX_df = HDX_df[HDX_df['%d']>0]
             HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
@@ -399,11 +398,11 @@ class pepGraph(Dataset):
             if len(node_ids) == 0:
                 continue
 
-            logt_vec = torch.full((len(node_ids), 1), peptide.log_t, dtype=torch.float32)
+            #logt_vec = torch.full((len(node_ids), 1), peptide.log_t, dtype=torch.float32)
             seqlen_vec = torch.full((len(node_ids), 1), len(node_ids)/self.max_len, dtype=torch.float32)
             seq_embedding = [G.nodes[node]['x'] for node in node_ids]
             seq_embedding = torch.stack(seq_embedding, dim=0)
-            seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], logt_vec, seqlen_vec), dim=1)
+            seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], seqlen_vec), dim=1)
             pad_needed = self.max_len - len(node_ids)
             seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
 

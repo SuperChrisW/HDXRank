@@ -1,13 +1,11 @@
 ### training ###
 import os
 import sys
-import copy
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-import comet_ml
 from comet_ml import Experiment
 from comet_ml.integration.pytorch import log_model
 from accelerate import Accelerator
@@ -16,17 +14,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
-from pepGraph_model import MixGCNBiLSTM
-from pepGraph_BiLSTM import GNN_v2
+from GearNet import GearNet
 
 import pandas as pd
 import numpy as np
-from pdb2sql import interface
 
 from scipy.stats import pearsonr
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-from pepGraph_utlis import seq_embedding, neighbor_search, neighbor_filter
+
 
 def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, accelerator, experiment, result_fpath, data_log = True):
     model.reset_parameters()
