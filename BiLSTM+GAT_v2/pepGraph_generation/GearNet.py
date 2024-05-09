@@ -1,14 +1,9 @@
-from collections.abc import Sequence
-
 import torch
 from torch import nn
 from torch_scatter import scatter_add
+from torchdrug import layers
 
-from torchdrug import core, layers
-from torchdrug.core import Registry as R
-
-
-class GearNet(nn.Module, core.Configurable):
+class GearNet(nn.Module):
     """
     Geometry Aware Relational Graph Neural Network proposed in
     `Protein Representation Learning by Geometric Structure Pretraining`_.
@@ -35,8 +30,6 @@ class GearNet(nn.Module, core.Configurable):
                  short_cut=False, batch_norm=False, activation="relu", concat_hidden=False, readout="sum"):
         super(GearNet, self).__init__()
 
-        if not isinstance(hidden_dims, Sequence):
-            hidden_dims = [hidden_dims]
         self.input_dim = input_dim
         self.output_dim = sum(hidden_dims) if concat_hidden else hidden_dims[-1]
         self.dims = [input_dim] + list(hidden_dims)
@@ -69,6 +62,14 @@ class GearNet(nn.Module, core.Configurable):
             self.readout = layers.MeanReadout()
         else:
             raise ValueError("Unknown readout `%s`" % readout)
+
+        # MLP output layer
+        if concat_hidden:
+            self.mlp = layers.MLP(sum(hidden_dims), 1,
+                    batch_norm=False, dropout=0)
+        else:
+            self.mlp = layers.MLP(hidden_dims[-1], 1,
+                        batch_norm=False, dropout=0, activation = 'relu')
 
     def forward(self, graph, input, all_loss=None, metric=None):
         """
@@ -115,8 +116,6 @@ class GearNet(nn.Module, core.Configurable):
         else:
             node_feature = hiddens[-1]
         graph_feature = self.readout(graph, node_feature)
+        pred = self.mlp(graph_feature)
 
-        return {
-            "graph_feature": graph_feature,
-            "node_feature": node_feature
-        }
+        return nn.functional.sigmoid(pred)
