@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 if __name__ == '__main__':
     root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
-    save_dir = f'{root_dir}/graph_ensemble_GearNet'
+    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 

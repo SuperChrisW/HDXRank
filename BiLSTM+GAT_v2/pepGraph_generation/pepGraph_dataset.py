@@ -10,6 +10,7 @@ from torch_geometric.data import HeteroData
 from torch_cluster import knn_graph, radius_graph
 
 from torchdrug import data
+from torchdrug.layers import geometry
 
 from Bio.PDB.Polypeptide import protein_letters_3to1
 from Bio.PDB import PDBParser, Selection
@@ -92,7 +93,7 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
             hdx_value = group['%d'].mean()/100 # average of RFU
             log_t = 0
 
-            res_seq = [res for res in res_chainsplit[chain] if start_pos <= res.i+1 <= end_pos]
+            res_seq = [res for res in res_chainsplit[chain] if start_pos <= res.i <= end_pos]
             pdb_seq = ''.join([protein_letters_3to1[res.name] for res in res_seq])
             if pdb_seq != sequence:
                 print("sequence mismatch: chain:", chain, "pdb_Seq:", pdb_seq, 'HDX_seq:', sequence)
@@ -145,8 +146,8 @@ def ResGraph(pdb_file, embedding_file, protein_chain = ['A']): # create networkx
                  "residue_id": residue.id[1], 'chain_id': protein_chain.index(residue.get_parent().id)})
         ]
         G.add_nodes_from(nodes_with_attributes)
-        res(i, residue.get_resname(), protein_chain.index(residue.get_parent().id), residue['CA'].coord)
-    
+        res(residue.id[1], residue.get_resname(), protein_chain.index(residue.get_parent().id), residue['CA'].coord)
+
     G = attach_node_attributes(G, embedding_file)
     return G
 
@@ -265,6 +266,9 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     protein = data.Protein(edge_list, atom_type, bond_type, view='residue', residue_number=residue_id,
                            node_position=node_position, atom2residue=atom2residue,residue_feature=residue_feature, 
                            residue_type=residue_type, num_relation = len(edge_type_list))
+    
+    Constructor = geometry.GraphConstruction(edge_feature = 'gearnet') 
+    edge_feature = Constructor.edge_gearnet(protein, protein.edge_list, len(edge_type_list))
 
     with protein.graph():
         protein.y = torch.tensor(G.graph['y'], dtype=torch.float32)
@@ -272,6 +276,9 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
         protein.chain = torch.tensor(G.graph['chain'], dtype=torch.int64)
         protein.seq_embedding = torch.tensor(G.graph['seq_embedding'], dtype=torch.float32)
     
+    with protein.edge():
+        protein.edge_feature = edge_feature
+
     return protein
 
 class pepGraph(Dataset):
@@ -282,7 +289,7 @@ class pepGraph(Dataset):
         #self.proflex_dir = os.path.join(root_dir, 'proflex_files')
         self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNet')
+        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
 
         self.max_len = max_len
         self.nfeature = nfeature
@@ -415,7 +422,7 @@ class pepGraph(Dataset):
             subG.graph['range'] = (peptide.start, peptide.end)
             subG.graph['chain'] = peptide.chain
             subG.graph['seq_embedding'] = seq_embedding
-            
+
             data = networkx_to_tgG(subG)
             graph_ensemble.append(data)
         label = f'{apo_identifier}'

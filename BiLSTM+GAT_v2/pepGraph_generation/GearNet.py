@@ -116,6 +116,6 @@ class GearNet(nn.Module):
         else:
             node_feature = hiddens[-1]
         graph_feature = self.readout(graph, node_feature)
-        pred = self.mlp(graph_feature)
+        pred = self.mlp(graph_feature).squeeze(-1)
 
         return nn.functional.sigmoid(pred) # add sigmoid for BCE loss calculation

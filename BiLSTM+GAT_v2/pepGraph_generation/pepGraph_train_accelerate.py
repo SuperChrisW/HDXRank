@@ -35,7 +35,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            outputs = model(graph_batch, graph_batch.residue_feature.float()).squeeze()
+            outputs = model(graph_batch, graph_batch.residue_feature.float())
 
             train_loss = loss_fn(outputs, targets)
             optimizer.zero_grad()
@@ -74,7 +74,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch.y
-                    outputs = model(graph_batch, graph_batch.residue_feature.float()).squeeze()
+                    outputs = model(graph_batch, graph_batch.residue_feature.float())
 
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
@@ -130,8 +130,14 @@ def main(training_args):
     ### model initialization ###
     torch.cuda.empty_cache()
 
+    #GearNet
     model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
                     num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
+    
+    #GearNet-Edge
+    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
+    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     ### training ###
     loss_fn = nn.BCELoss()    
@@ -161,17 +167,10 @@ def main(training_args):
             experiment, result_fpath, data_log = training_args['data_log'])
         if training_args['data_log']:
             log_model(experiment, model=model, model_name = 'PEP-HDX')
-        
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': rmse_train_list,
-            'train_pcc': rp_train
-            }, f'{result_dir}/checkpoint.pth')
 
 if __name__ == "__main__":
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':300,
             'batch_size': 16,
@@ -196,7 +195,6 @@ if __name__ == "__main__":
             'file_name': 'best_model_GearNet',
             'data_log': True
     }
-
 
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
 
