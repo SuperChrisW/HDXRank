@@ -1,0 +1,27 @@
+/chunk_collector.h/1.1/Sat Apr 23 04:48:41 2011//
+/cstream.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_array.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_base.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_cstyle.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_filereader.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_filereaderiterator.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_cgviz.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_embl.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_fasta.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_fasta_align.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_genbank.h/1.1/Sat Apr 23 04:48:41 2011//
+/file_format_guess.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_format_mmap.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_format_raw.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_format_sam.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_forwards.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_generated_forwards.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_page.h/1.1/Sat Apr 23 04:48:42 2011//
+/file_page_raid0.h/1.1/Sat Apr 23 04:48:42 2011//
+/meta.h/1.1/Sat Apr 23 04:48:42 2011//
+/stream.h/1.1/Sat Apr 23 04:48:42 2011//
+/stream_algorithms.h/1.1/Sat Apr 23 04:48:42 2011//
+/string_external.h/1.1/Sat Apr 23 04:48:42 2011//
+/string_mmap.h/1.1/Sat Apr 23 04:48:42 2011//
+D

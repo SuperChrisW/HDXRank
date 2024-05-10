@@ -1,0 +1,5 @@
+export FRODANHOME=/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/prog/Frodan/frodaN
+cd $FRODANHOME
+conda activate py2
+python $FRODANHOME/preprocess.py -i 1CFC.pdb -o options_fixedcons.xml
+$FRODANHOME/bin/main options_fixedcons.xml

@@ -49,17 +49,17 @@ def merge_inputs(inputs_list):
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/models/S3214dataset'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
 
     dssp_dir = os.path.join(root_dir, 'dssp_files')
     hhm_dir = os.path.join(root_dir, 'hhm_files')
     rigidity_dir = os.path.join(root_dir, 'rigidity_files')
     save_dir = os.path.join(root_dir, 'embedding_files')
-    structure_dir = os.path.join(root_dir, 'pdbs', 'myoglobin', '1bz6A')
+    structure_dir = os.path.join(root_dir, 'structure')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/myoglobin_record.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
     df = df.dropna(subset=['chain_identifier'])
     df = df.drop_duplicates(subset=['apo_identifier'])
     fail_list = []
@@ -126,7 +126,7 @@ if __name__ == "__main__":
             res_idx_list.append(chemdata.aa2num[name] if name in chemdata.aa2num else 20)
         res_idx_list = np.array(res_idx_list).reshape(-1, 1)
 
-        contact_ensemble = []        
+        contact_ensemble = []
         if len(NA_inputs) != 0 or len(SM_inputs) != 0:
             for inputs in [NA_inputs, SM_inputs]:
                 merged_HETinput = merge_inputs(inputs)
@@ -149,6 +149,7 @@ if __name__ == "__main__":
         #print('encoded_tensor reshape:', encoded_tensor.shape)
         encoded_tensor = torch.sum(encoded_tensor, dim=1)
         encoded_tensor = torch.log(encoded_tensor + 1) # apply log(e) to elements
+
         protein_embedding = torch.cat((embed_mtx, encoded_tensor), dim=1)
         #print('protein_embedding shape:', protein_embedding.shape)
 

@@ -6,8 +6,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-#from comet_ml import Experiment
-#from comet_ml.integration.pytorch import log_model
+from comet_ml import Experiment
+from comet_ml.integration.pytorch import log_model
 
 import torch
 import torch.nn as nn
@@ -173,7 +173,7 @@ if __name__ == "__main__":
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     config = {
-            'num_epochs':3,
+            'num_epochs':300,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
@@ -194,10 +194,10 @@ if __name__ == "__main__":
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
             'file_name': 'best_model_GearNet',
-            'data_log': False
+            'data_log': True
     }
 
-    '''
+
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
 
     experiment = Experiment(
@@ -208,7 +208,7 @@ if __name__ == "__main__":
    
     if training_args['data_log']:
         experiment.log_parameters(config)
-    '''
-    experiment = ''
+
+    #experiment = ''
     main(training_args)
     torch.cuda.empty_cache()

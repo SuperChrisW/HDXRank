@@ -1,0 +1,21 @@
+/adapt_std_list.h/1.1/Sat Apr 23 04:46:56 2011//
+/lexical.h/1.1/Sat Apr 23 04:46:56 2011//
+/segment_base.h/1.1/Sat Apr 23 04:46:56 2011//
+/segment_infix.h/1.1/Sat Apr 23 04:46:56 2011//
+/segment_prefix.h/1.1/Sat Apr 23 04:46:56 2011//
+/segment_suffix.h/1.1/Sat Apr 23 04:46:56 2011//
+/sequence_forwards.h/1.1/Sat Apr 23 04:46:56 2011//
+/sequence_generated_forwards.h/1.1/Sat Apr 23 04:46:56 2011//
+/sequence_interface.h/1.1/Sat Apr 23 04:46:56 2011//
+/sequence_multiple.h/1.1/Sat Apr 23 04:46:56 2011//
+/sequence_shortcuts.h/1.1/Sat Apr 23 04:46:56 2011//
+/std_string.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_alloc.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_array.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_base.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_cstyle.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_packed.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_pointer.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_stack.h/1.1/Sat Apr 23 04:46:56 2011//
+/string_value_expand.h/1.1/Sat Apr 23 04:46:56 2011//
+D

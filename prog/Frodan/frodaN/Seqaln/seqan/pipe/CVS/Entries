@@ -1,0 +1,18 @@
+/pipe_base.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_caster.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_counter.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_echoer.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_edit_environment.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_filter.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_generated_forwards.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_iterator.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_joiner.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_namer.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_sampler.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_shifter.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_source.h/1.1/Sat Apr 23 04:46:54 2011//
+/pipe_tupler.h/1.1/Sat Apr 23 04:46:54 2011//
+/pool_base.h/1.1/Sat Apr 23 04:46:54 2011//
+/pool_mapper.h/1.1/Sat Apr 23 04:46:54 2011//
+/pool_sorter.h/1.1/Sat Apr 23 04:46:54 2011//
+D
