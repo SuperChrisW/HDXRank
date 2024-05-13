@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch_geometric as tg
-from torch_geometric.nn import GCNConv, SAGEConv, GATConv, global_mean_pool as gmp
+from torch_scatter import scatter_add
+from torchdrug import layers
 
 
 class BiLSTM(nn.Module):
@@ -21,7 +21,7 @@ class BiLSTM(nn.Module):
 
         stride = 1
         kernel_size = 3
-        input_width = args['feat_in_dim'] +2 # two extra feat: log_t and sequence length/ max_len
+        input_width = args['feat_in_dim'] +1 # one extra feat: sequence length/ max_len
         input_height = 30
         output_height = (input_height - kernel_size) // stride + 1
         output_width = (input_width - kernel_size) // stride + 1
@@ -54,73 +54,126 @@ class BiLSTM(nn.Module):
         x = F.relu(self.fc1(x))
         return x
 
-class GNN_v2(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.feat_in_dim = args['feat_in_dim']
-        self.topo_in_dim = args['topo_in_dim']
-        self.hidden_dim = args['GNN_hidden_dim']
-        self.module_out_dim = args['GNN_out_dim']
-        self.num_heads = args['num_heads']
-        self.drop_rate = args['drop_out']
-        self.num_GNN_layers = args['num_GNN_layers']
+class GearNet(nn.Module):
+    """
+    Geometry Aware Relational Graph Neural Network proposed in
+    `Protein Representation Learning by Geometric Structure Pretraining`_.
 
-        # Separate GAT layers for feature and topology matrices
-        self.gat_layers_feat = nn.ModuleList([
-            GATConv(self.feat_in_dim, self.hidden_dim, heads=self.num_heads, dropout=self.drop_rate) if i == 0 else
-            GATConv(self.hidden_dim * self.num_heads, self.hidden_dim, heads=self.num_heads) if i < self.num_GNN_layers - 1 else
-            GATConv(self.hidden_dim * self.num_heads, self.module_out_dim, heads=self.num_heads)
-            for i in range(self.num_GNN_layers)
-        ])
+    .. _Protein Representation Learning by Geometric Structure Pretraining:
+        https://arxiv.org/pdf/2203.06125.pdf
 
-        self.gat_layers_topo = nn.ModuleList([
-            GATConv(self.topo_in_dim, self.hidden_dim, heads=self.num_heads, dropout=self.drop_rate) if i == 0 else
-            GATConv(self.hidden_dim * self.num_heads, self.hidden_dim, heads=self.num_heads) if i < self.num_GNN_layers - 1 else
-            GATConv(self.hidden_dim * self.num_heads, self.module_out_dim, heads=self.num_heads)
-            for i in range(self.num_GNN_layers)
-        ])
+    Parameters:
+        input_dim (int): input dimension
+        hidden_dims (list of int): hidden dimensions
+        num_relation (int): number of relations
+        edge_input_dim (int, optional): dimension of edge features
+        num_angle_bin (int, optional): number of bins to discretize angles between edges.
+            The discretized angles are used as relations in edge message passing.
+            If not provided, edge message passing is disabled.
+        short_cut (bool, optional): use short cut or not
+        batch_norm (bool, optional): apply batch normalization or not
+        activation (str or function, optional): activation function
+        concat_hidden (bool, optional): concat hidden representations from all layers as output
+        readout (str, optional): readout function. Available functions are ``sum`` and ``mean``.
+    """
 
-        self.drop_out = nn.Dropout(self.drop_rate)
-        self.fc = nn.Linear(self.module_out_dim * self.num_heads * 2, self.module_out_dim)  # Adjusted for concatenated vector
+    def __init__(self, input_dim, hidden_dims, num_relation, edge_input_dim=None, num_angle_bin=None,
+                 short_cut=False, batch_norm=False, activation="relu", concat_hidden=False, readout="sum"):
+        super(GearNet, self).__init__()
 
-    def reset_parameters(self):
-        for layer in self.gat_layers_feat:
-            layer.reset_parameters()
-        for layer in self.gat_layers_topo:
-            layer.reset_parameters()
-        self.fc.reset_parameters()
+        self.input_dim = input_dim
+        self.output_dim = sum(hidden_dims) if concat_hidden else hidden_dims[-1]
+        self.dims = [input_dim] + list(hidden_dims)
+        self.edge_dims = [edge_input_dim] + self.dims[:-1]
+        self.num_relation = num_relation
+        self.num_angle_bin = num_angle_bin
+        self.short_cut = short_cut
+        self.concat_hidden = concat_hidden
+        self.batch_norm = batch_norm
 
-    def forward_branch(self, branch_layers, x, edge_index):
-        for layer in branch_layers:
-            x = F.relu(layer(x, edge_index))
-            x = self.drop_out(x)
-        return x
+        self.layers = nn.ModuleList()
+        for i in range(len(self.dims) - 1):
+            self.layers.append(layers.GeometricRelationalGraphConv(self.dims[i], self.dims[i + 1], num_relation,
+                                                                   None, batch_norm, activation))
+        if num_angle_bin:
+            self.spatial_line_graph = layers.SpatialLineGraph(num_angle_bin)
+            self.edge_layers = nn.ModuleList()
+            for i in range(len(self.edge_dims) - 1):
+                self.edge_layers.append(layers.GeometricRelationalGraphConv(
+                    self.edge_dims[i], self.edge_dims[i + 1], num_angle_bin, None, batch_norm, activation))
 
-    def forward(self, graph_data):
-        topo_x = graph_data.x[:, self.feat_in_dim:self.feat_in_dim + self.topo_in_dim]
-        feat_x = graph_data.x[:, :self.feat_in_dim]
-        
-        batch = graph_data.batch
-        edge_index = graph_data.edge_index
+        if batch_norm:
+            self.batch_norms = nn.ModuleList()
+            for i in range(len(self.dims) - 1):
+                self.batch_norms.append(nn.BatchNorm1d(self.dims[i + 1]))
 
-        # Process feature and topology matrices separately
-        processed_feat = self.forward_branch(self.gat_layers_feat, feat_x, edge_index)
-        processed_topo = self.forward_branch(self.gat_layers_topo, topo_x, edge_index)
+        if readout == "sum":
+            self.readout = layers.SumReadout()
+        elif readout == "mean":
+            self.readout = layers.MeanReadout()
+        else:
+            raise ValueError("Unknown readout `%s`" % readout)
 
-        # Concatenate processed features and topology matrices
-        x = torch.cat((processed_feat, processed_topo), dim=-1)
+        # MLP output layer
+        if concat_hidden:
+            self.mlp = layers.MLP(sum(hidden_dims), 16,
+                    batch_norm=False, dropout=0)
+        else:
+            self.mlp = layers.MLP(hidden_dims[-1], 16,
+                        batch_norm=False, dropout=0, activation = 'relu')
 
-        # Global mean pooling
-        x = gmp(x, batch)
-        
-        # Fully connected layer
-        x = torch.sigmoid(self.fc(x))
-        
-        return x
+    def forward(self, graph, input, all_loss=None, metric=None):
+        """
+        Compute the node representations and the graph representation(s).
+
+        Parameters:
+            graph (Graph): :math:`n` graph(s)
+            input (Tensor): input node representations
+            all_loss (Tensor, optional): if specified, add loss to this tensor
+            metric (dict, optional): if specified, output metrics to this dict
+
+        Returns:
+            dict with ``node_feature`` and ``graph_feature`` fields:
+                node representations of shape :math:`(|V|, d)`, graph representations of shape :math:`(n, d)`
+        """
+        hiddens = []
+        layer_input = input
+        if self.num_angle_bin:
+            line_graph = self.spatial_line_graph(graph)
+            edge_input = line_graph.node_feature.float()
+
+        for i in range(len(self.layers)):
+            hidden = self.layers[i](graph, layer_input)
+            if self.short_cut and hidden.shape == layer_input.shape:
+                hidden = hidden + layer_input
+            if self.num_angle_bin:
+                edge_hidden = self.edge_layers[i](line_graph, edge_input)
+                edge_weight = graph.edge_weight.unsqueeze(-1)
+                node_out = graph.edge_list[:, 1] * self.num_relation + graph.edge_list[:, 2]
+                update = scatter_add(edge_hidden * edge_weight, node_out, dim=0,
+                                     dim_size=graph.num_node * self.num_relation)
+                update = update.view(graph.num_node, self.num_relation * edge_hidden.shape[1])
+                update = self.layers[i].linear(update)
+                update = self.layers[i].activation(update)
+                hidden = hidden + update
+                edge_input = edge_hidden
+            if self.batch_norm:
+                hidden = self.batch_norms[i](hidden)
+            hiddens.append(hidden)
+            layer_input = hidden
+
+        if self.concat_hidden:
+            node_feature = torch.cat(hiddens, dim=-1)
+        else:
+            node_feature = hiddens[-1]
+        graph_feature = self.readout(graph, node_feature)
+        pred = self.mlp(graph_feature).squeeze(-1)
+
+        return nn.functional.relu(pred)
     
-class MixGCNBiLSTM(nn.Module):
+class MixBiLSTM_GearNet(nn.Module):
     def __init__(self, args):
-        super(MixGCNBiLSTM, self).__init__()
+        super(MixBiLSTM_GearNet, self).__init__()
         self.feat_in_dim = args['feat_in_dim']
         self.topo_in_dim = args['topo_in_dim']
         self.hidden_dim = args['final_hidden_dim']
@@ -129,7 +182,8 @@ class MixGCNBiLSTM(nn.Module):
         self.batch_size = args['batch_size']
 
         self.bilstm = BiLSTM(args)
-        self.gnn = GNN_v2(args)
+        self.gnn = GearNet(input_dim = self.feat_in_dim+self.topo_in_dim, hidden_dims = [512,512,512],
+                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
 
         self.fc1 = nn.Linear(self.module_out_dim, self.hidden_dim)
         self.fc2 = nn.Linear(self.hidden_dim, 1)
@@ -142,10 +196,11 @@ class MixGCNBiLSTM(nn.Module):
         self.fc2.reset_parameters()
 
     def forward(self, graph_data):
-        seq_embedding = graph_data['seq_embedding'].reshape(-1, 1, 30, self.feat_in_dim+2)
+        seq_embedding = graph_data.seq_embedding.reshape(-1, 1, 30, self.feat_in_dim+1)
         x_bilstm = self.bilstm(seq_embedding)
-        x_gcn = self.gnn(graph_data)
-        x_integrated = torch.cat((x_bilstm, x_gcn), dim=1)
+        x_gearnet = self.gnn(graph_data, graph_data.residue_feature.float())
+
+        x_integrated = torch.cat((x_bilstm, x_gearnet), dim=1)
         x = self.dropout(F.relu(self.fc1(x_integrated)))
         x = torch.sigmoid(self.fc2(x))
         return x.squeeze(-1)
