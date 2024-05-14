@@ -289,7 +289,7 @@ class pepGraph(Dataset):
         #self.proflex_dir = os.path.join(root_dir, 'proflex_files')
         self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
+        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge_minus')
 
         self.max_len = max_len
         self.nfeature = nfeature
@@ -413,8 +413,8 @@ class pepGraph(Dataset):
             pad_needed = self.max_len - len(node_ids)
             seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
 
-            neigbhor_node = find_neigbhors(G, node_ids, hop=1)
-            node_ids.extend(neigbhor_node)
+            #neigbhor_node = find_neigbhors(G, node_ids, hop=1)
+            #node_ids.extend(neigbhor_node)
             node_ids = set(node_ids)
 
             subG = G.subgraph(node_ids).copy()

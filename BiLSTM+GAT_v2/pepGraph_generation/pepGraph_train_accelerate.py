@@ -92,7 +92,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 torch.save(model.state_dict(), f'{result_fpath}.pth')
             else:
                 trigger_times += 1
-                if trigger_times >= 8:
+                if trigger_times >= 5:
                     print('Early stopping')
                     break
 
@@ -105,7 +105,7 @@ def main(training_args):
     hdx_df = pd.read_excel(summary_HDX_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['chain_identifier'])
 
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge_minus')
     result_dir = training_args['result_dir']
     result_fpath = os.path.join(training_args['result_dir'], training_args['file_name'])
     if not os.path.exists(result_dir):
@@ -135,13 +135,13 @@ def main(training_args):
     torch.cuda.empty_cache()
 
     #GearNet
-    #model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
-    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
+    model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
+                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
     
     #GearNet-Edge
-    model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
-                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
+    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(training_args).to(device)
@@ -199,7 +199,7 @@ if __name__ == "__main__":
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
-            'file_name': 'best_model_MixBiLSTM_GearNetEdge',
+            'file_name': 'best_model_GearNet_minus',
             'data_log': True,
             'device': device
     }

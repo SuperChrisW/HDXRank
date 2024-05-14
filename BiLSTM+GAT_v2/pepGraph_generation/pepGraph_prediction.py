@@ -31,9 +31,9 @@ def test_model(model, test_loader, device):
     for i, graph_batch in enumerate(test_loader):
         graph_batch = graph_batch.to(device)
         targets = graph_batch.y
-        #outputs = model(graph_batch, graph_batch.residue_feature.float())
+        outputs = model(graph_batch, graph_batch.residue_feature.float())
 
-        outputs = model(graph_batch)
+        #outputs = model(graph_batch)
         #range_list.extend(graph_batch.range.cpu().detach().numpy())
         #chain_list.extend(graph_batch.chain)
 
@@ -216,12 +216,12 @@ def main(save_args):
     #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
     
     #GearNet-Edge
-    #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
-    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
-    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+    model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
+                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
+                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     #MixBiLSTM_GearNet
-    model = MixBiLSTM_GearNet(merged_config).to(device)
+    #model = MixBiLSTM_GearNet(merged_config).to(device)
     
     model_state_dict = torch.load(model_path)
     model.load_state_dict(model_state_dict)
@@ -346,7 +346,7 @@ if __name__ == "__main__":
         #save setting
         'plot_title': 'test_set',
         'date': '240514',
-        'model_name': 'MixBiLSTM_GearNet',
+        'model_name': 'GearNetEdge',
         'version': 'v1',
         'result_dir': f'/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
         #'prediction_csv': f'HDX_pred_{protein_name}.csv',
@@ -355,7 +355,7 @@ if __name__ == "__main__":
         'prediction_protein': protein_list,
         'finetune_check' : False,
         'finetune_protein': [],
-        'model_path': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU/best_model_MixBiLSTM_GearNet.pth',
+        'model_path': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU/best_model_GearNetEdge2.pth',
 
         #plot setting
         'slide_window': 1,
