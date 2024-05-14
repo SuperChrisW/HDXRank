@@ -6,17 +6,16 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from accelerate import Accelerator
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.loader import DataLoader
-from pepGraph_model import MixGCNBiLSTM
-from pepGraph_BiLSTM import GNN_v2
+from torchdrug import data
 
 import pandas as pd
 import numpy as np
 import itertools
+from GearNet import GearNet
+from pepGraph_model import MixBiLSTM_GearNet
 
 from scipy.stats import pearsonr, spearmanr
 import matplotlib.pyplot as plt
@@ -30,12 +29,13 @@ def test_model(model, test_loader, device):
     chain_list = []
     model.eval()
     for i, graph_batch in enumerate(test_loader):
-        graph_batch.to(device)
-        targets = graph_batch.y.to(dtype=torch.float32) #only for Full set and RTT-BCD set
+        graph_batch = graph_batch.to(device)
+        targets = graph_batch.y
+        #outputs = model(graph_batch, graph_batch.residue_feature.float())
+
         outputs = model(graph_batch)
-        outputs = outputs.to(dtype = torch.float32)
-        range_list.extend(graph_batch.range.cpu().detach().numpy())
-        chain_list.extend(graph_batch.chain)
+        #range_list.extend(graph_batch.range.cpu().detach().numpy())
+        #chain_list.extend(graph_batch.chain)
 
         y_pred.append(outputs.cpu().detach().numpy())
         y_true.append(targets.cpu().detach().numpy())
@@ -115,7 +115,7 @@ def run_prediction(model, hdx_df, merged_config, pepGraph_dir, device):
     return y_true, y_pred, range_list, chain_list
 
 def load_model(model_path, config, accelerator):
-    model = MixGCNBiLSTM(config)
+    model = GearNet(config)
     unwrapped_model = accelerator.unwrap_model(model)
     path_to_checkpoint = os.path.join(model_path, "pytorch_model.bin")
     unwrapped_model.load_state_dict(torch.load(path_to_checkpoint))
@@ -134,7 +134,11 @@ def load_data(df, pepGraph_dir, merged_config):
                 pepGraph_ensemble = torch.load(pepGraph_file) # list of graphs
                 input_data.extend(pepGraph_ensemble)
     print('length of input_data:', len(input_data))
-    return DataLoader(input_data, batch_size=merged_config['batch_size'], shuffle=True)
+
+    test_set = data.Protein.pack(input_data)
+    test_set.view = 'residue'
+    test_loader = data.DataLoader(test_set, batch_size = merged_config['batch_size'], shuffle=False, num_workers=merged_config['num_workers'])
+    return test_loader
 
 def finetune(model, finetune_loader, config, accelerator):
     
@@ -168,17 +172,15 @@ def finetune(model, finetune_loader, config, accelerator):
 
 def main(save_args):
     ##################################### initial setting #####################################
-    root_dir = "/home/lwang/models/HDX_LSTM/data/COVID_SPIKE"
-    HDX_summary_file = f'{root_dir}/hdock/COVID_Delta.xlsx'
-    hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
+    root_dir = "/home/lwang/models/HDX_LSTM/data/test_set"
+    HDX_summary_file = f'{root_dir}/merged_data.xlsx'
+    hdx_df = pd.read_excel(HDX_summary_file, sheet_name='test_set')
     hdx_df = hdx_df.dropna(subset=['chain_identifier'])
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble')
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
 
     model_path = save_args['model_path']
 
-    accelerator = Accelerator()
-    device = accelerator.device
-    #device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     ##################################### config setting #####################################
     config = {
     #training setting
@@ -190,7 +192,7 @@ def main(save_args):
     'num_GNN_layers': 3,
     'cross_validation_num': 1,
     'num_workers': 4,
-    'result_dir': '/home/lwang/models/HDX_LSTM/results/240411_BiLSTMGAT_v2_1',
+    'result_dir': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
     'data_log': False,  
 
     #model setting
@@ -208,41 +210,52 @@ def main(save_args):
     }
     merged_config = {**config, **save_args}
 
-    model = load_model(model_path, merged_config, accelerator)
+    ##################################### model setting #####################################
+    #GearNet
+    #model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
+    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
+    
+    #GearNet-Edge
+    #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
+    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
+    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+
+    #MixBiLSTM_GearNet
+    model = MixBiLSTM_GearNet(merged_config).to(device)
+    
+    model_state_dict = torch.load(model_path)
+    model.load_state_dict(model_state_dict)
     model = model.to(device)
+
     # finetune here
     if merged_config['finetune_check']:
         merged_config['load_proteins'] = merged_config['finetune_protein']
         finetune_loader = load_data(hdx_df, pepGraph_dir, merged_config)
-        finetune_loader = accelerator.prepare(finetune_loader)
-        model = finetune(model, finetune_loader, merged_config, accelerator)
+        #finetune_loader = accelerator.prepare(finetune_loader)
+        #model = finetune(model, finetune_loader, merged_config, accelerator)
 
     # run_prediciton here 
-    '''# plot RMSE vs seq_lens
+    # plot RMSE vs seq_lens
     merged_config['load_proteins'] = merged_config['prediction_protein']
     y_true, y_pred, range_, chain = run_prediction(model, hdx_df, merged_config, pepGraph_dir, device)
 
-    range_ = np.array(range_).reshape(-1, 2)
-    seq_lens = (range_[:, 1] - range_[:, 0]).flatten() + 1
+    pearsonr_ = pearsonr(y_true, y_pred)
+    spearmanr_ = spearmanr(y_true, y_pred)
+    rmse = sqrt(mean_squared_error(y_true, y_pred))
+    print('Pearson:', pearsonr_)
+    print('Spearman:', spearmanr_)
+    print('RMSE:', rmse)
 
+    #plot scatter plot of y_true vs y_pred
+    plt.figure(figsize=(10, 10))
+    plt.scatter(y_true, y_pred, c='b')
+    plt.xlabel('True HDX')
+    plt.ylabel('Predicted HDX')
+    plt.plot([0, 1], [0, 1], 'r--')
+    plt.title(f'True vs Predicted HDX Pearson: {pearsonr_[0]:.3f}, Spearman: {spearmanr_[0]:.3f}, RMSE: {rmse:.3f}')
+    plt.savefig(f'{merged_config["result_dir"]}/{merged_config["date"]}_{merged_config["model_name"]}_{merged_config["plot_title"]}.png')
 
-    mse_perSeqlen = {}
-    for len in np.unique(seq_lens):
-        mask = (seq_lens == len)
-        rmse = sqrt(mean_squared_error(y_true[mask], y_pred[mask]))
-        var = np.var(y_true[mask] - y_pred[mask])
-        mse_perSeqlen[len] = rmse
-        print(f'Sequence Length {len} MSE:', rmse , 'Variance:', var)
-    
-    #plot a graph of mse vs seq_lens bar chart
-    plt.figure(figsize=(10, 5))
-    plt.bar(mse_perSeqlen.keys(), mse_perSeqlen.values(), color='b')
-    plt.xlabel('Sequence Length')
-    plt.ylabel('RMSE')
-    plt.title('RMSE vs Sequence Length')
-    plt.savefig(f'{merged_config["result_dir"]}/RMSE_vs_Sequence_Length.png')
     '''
-    
     y_true_list = []
     y_pred_list = []
     range_list = []
@@ -291,7 +304,6 @@ def main(save_args):
     results_df.to_csv(results_csv_path, index=False)
     print('results saved to csv:', results_csv_path)
 
-    '''
     batch_list = np.array(batch_list)
     range_list = np.array(range_list).reshape(-1, 2)
     pepcenter = np.mean(range_list, axis=1)
@@ -324,27 +336,26 @@ def main(save_args):
     '''
 
 if __name__ == "__main__":
-    protein_name  = 'Hdock_DeltaRBD+V16noext'
+    #protein_name  = 'Hdock_DeltaRBD+V16noext'
+    #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
 
-    protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
-
-    #data_list = os.listdir('/home/lwang/models/S3214dataset/graph_ensemble')
-    #protein_list = [data.split('.')[0] for data in data_list]
+    data_list = os.listdir('/home/lwang/models/HDX_LSTM/data/test_set/graph_ensemble_GearNetEdge')
+    protein_list = [data.split('.')[0] for data in data_list]
 
     save_args = {
         #save setting
-        'plot_title': 'Hdock_AF_rtt+bcd_G0',
-        'date': '240422',
-        'model_name': 'BiLSTMGAT_finetune',
-        'version': 'v2',
-        'result_dir': f'/home/lwang/models/HDX_LSTM/results/240411_BiLSTMGAT_v2_1',
-        'prediction_csv': f'HDX_pred_{protein_name}.csv',
+        'plot_title': 'test_set',
+        'date': '240514',
+        'model_name': 'MixBiLSTM_GearNet',
+        'version': 'v1',
+        'result_dir': f'/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
+        #'prediction_csv': f'HDX_pred_{protein_name}.csv',
 
         #prediction setting
         'prediction_protein': protein_list,
         'finetune_check' : False,
-        'finetune_protein': ['delta_spikeprotein'],
-        'model_path': '/home/lwang/models/HDX_LSTM/results/240411_BiLSTMGAT_v2_1/best_model.pt',
+        'finetune_protein': [],
+        'model_path': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU/best_model_MixBiLSTM_GearNet.pth',
 
         #plot setting
         'slide_window': 1,

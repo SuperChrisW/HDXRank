@@ -266,7 +266,7 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     protein = data.Protein(edge_list, atom_type, bond_type, view='residue', residue_number=residue_id,
                            node_position=node_position, atom2residue=atom2residue,residue_feature=residue_feature, 
                            residue_type=residue_type, num_relation = len(edge_type_list))
-    
+
     Constructor = geometry.GraphConstruction(edge_feature = 'gearnet') 
     edge_feature = Constructor.edge_gearnet(protein, protein.edge_list, len(edge_type_list))
 

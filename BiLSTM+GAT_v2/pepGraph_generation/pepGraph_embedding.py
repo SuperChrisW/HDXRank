@@ -49,7 +49,7 @@ def merge_inputs(inputs_list):
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/test_set'
 
     dssp_dir = os.path.join(root_dir, 'dssp_files')
     hhm_dir = os.path.join(root_dir, 'hhm_files')
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='test_set')
     df = df.dropna(subset=['chain_identifier'])
     df = df.drop_duplicates(subset=['apo_identifier'])
     fail_list = []
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         if len(NA_inputs) != 0 or len(SM_inputs) != 0:
             for inputs in [NA_inputs, SM_inputs]:
                 merged_HETinput = merge_inputs(inputs)
-                print('merged_HETinput:', merged_HETinput, type(merged_HETinput))
+                #print('merged_HETinput:', merged_HETinput, type(merged_HETinput))
                 if len(merged_HETinput.seq_data.keys()) == 0:
                     continue
                 contact_mtx = find_contact_res(merged_HETinput, res_list, cutoff = 5.0)  # [#res, #entity of NA/SM] where elements are type encoding

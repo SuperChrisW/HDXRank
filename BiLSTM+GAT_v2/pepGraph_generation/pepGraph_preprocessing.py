@@ -9,12 +9,12 @@ import torch
 from tqdm import tqdm
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/test_set'
     save_dir = f'{root_dir}/graph_ensemble_GearNetEdge'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='test_set')
     df = df.dropna(subset=['chain_identifier'])
     apo_identifier = df['apo_identifier'].astype(str).unique()
 
