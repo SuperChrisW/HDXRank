@@ -167,7 +167,6 @@ def load_embedding(fpath, feat_rescale = True):
 
     #MSA-based features
     HHblits = embedding.loc[:, 17:].to_numpy()
-    PSSM = None
 
     #transform
     def rescale(data):
@@ -291,6 +290,7 @@ def get_seq_polarity(seq):
     return polarity_mtx
 
 def parse_hhm(hhm_file):
+    # from AI-HDX: https://github.com/Environmentalpublichealth/AI-HDX
     hhm_mtx = []
     with open(hhm_file) as f:
         for i in f:
@@ -321,7 +321,7 @@ def parse_hhm(hhm_file):
     return np.array(hhm_mtx), sequence
 
 # loading protine, NA, molecule ligand
-def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
+def load_protein(hhm_file, pdb_file, chain_id):
     '''
     Generate embedding file from the pre-computed HMM file and rigidity file, PDB strucutre
     processing the protein chain featurization
@@ -344,7 +344,7 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
         else:
             print(f'Non-standard AA found: {res_name}')
 
-        ca_atom = res['CA'] if 'CA' in res else None
+        ca_atom = res['CA'] if 'CA' in res else None #TODO: record N, Ca, C, coords
         if ca_atom is None: 
             raise ValueError(f'CA atom not found in the residue at {res_id}')
             #ca_coord = [0, 0, 0]
@@ -366,7 +366,7 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
     print('sequence feat. done', end_time - start_time)
     start_time = end_time
 
-    # structure-based features
+    # physical-based features
     hse_dict = get_hse(model, chain_id)
     SASA = biotite_SASA(pdb_file, chain_id)[:max_len]
     end_time = time.time()
@@ -378,6 +378,10 @@ def load_protein(hhm_file, rigidity_file, pdb_file, chain_id):
     end_time = time.time()
     print('MSA feat. done', end_time - start_time)
     start_time = end_time
+
+    # structura based features: dihedral angels and orientations
+    dihedrals = _dihedrals(coords)
+    orientations = _orientations(Ca_coords)
 
     # check the sequence match among feat.
     res_seq = ''.join(res_seq)
@@ -489,6 +493,49 @@ def load_nucleic_acid(pdb_file, chain_id):
         type_label = 'NA'
     )
 
+
+def _normalize(tensor, dim=-1):
+    '''
+    Normalizes a `torch.Tensor` along dimension `dim` without `nan`s.
+    '''
+    return torch.nan_to_num(
+        torch.div(tensor, torch.norm(tensor, dim=dim, keepdim=True)))
+
+def _dihedrals(self, X, eps=1e-7):
+    # From https://github.com/jingraham/neurips19-graph-protein-design
+    
+    X = torch.reshape(X[:, :3], [3*X.shape[0], 3])
+    dX = X[1:] - X[:-1]
+    U = _normalize(dX, dim=-1)
+    u_2 = U[:-2]
+    u_1 = U[1:-1]
+    u_0 = U[2:]
+
+    # Backbone normals
+    n_2 = _normalize(torch.cross(u_2, u_1), dim=-1)
+    n_1 = _normalize(torch.cross(u_1, u_0), dim=-1)
+
+    # Angle between normals
+    cosD = torch.sum(n_2 * n_1, -1)
+    cosD = torch.clamp(cosD, -1 + eps, 1 - eps)
+    D = torch.sign(torch.sum(u_2 * n_1, -1)) * torch.acos(cosD)
+
+    # This scheme will remove phi[0], psi[-1], omega[-1]
+    D = F.pad(D, [1, 2]) 
+    D = torch.reshape(D, [-1, 3])
+    # Lift angle representations to the circle
+    D_features = torch.cat([torch.cos(D), torch.sin(D)], 1)
+    return D_features
+
+def _orientations(X):
+    # From https://github.com/drorlab/gvp
+    forward = _normalize(X[1:] - X[:-1])
+    backward = _normalize(X[:-1] - X[1:])
+    forward = F.pad(forward, [0, 0, 0, 1])
+    backward = F.pad(backward, [0, 0, 1, 0])
+    return torch.cat([forward.unsqueeze(-2), backward.unsqueeze(-2)], -2)
+
+
 # graph modification
 def neighbor_search(node_list, edge_index):
     '''
@@ -526,7 +573,6 @@ def neighbor_filter(graph, neighbors):
     graph.edge_index = modified_edge.t()
     graph.edge_attr = modified_edge_attr
     return graph
-
 
 # Find contact residue pairs
 class Chain:
