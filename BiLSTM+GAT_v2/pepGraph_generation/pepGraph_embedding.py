@@ -49,24 +49,21 @@ def merge_inputs(inputs_list):
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/models/HDX_LSTM/data/test_set'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
 
-    dssp_dir = os.path.join(root_dir, 'dssp_files')
     hhm_dir = os.path.join(root_dir, 'hhm_files')
-    rigidity_dir = os.path.join(root_dir, 'rigidity_files')
     save_dir = os.path.join(root_dir, 'embedding_files')
     structure_dir = os.path.join(root_dir, 'structure')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='test_set')
-    df = df.dropna(subset=['chain_identifier'])
-    df = df.drop_duplicates(subset=['apo_identifier'])
+    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet1')
+    df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
     fail_list = []
     chemdata = ChemData()
 
     for id, row in df.iterrows():
-        apo_pdb = row['apo_identifier'].split('.')[0]
+        apo_pdb = str(row['structure_file']).upper().split('.')[0]
         print('processing:', apo_pdb)
         if os.path.isfile(f'{save_dir}/{apo_pdb}.pt'):
             print('file exist')
@@ -75,8 +72,8 @@ if __name__ == "__main__":
             protein_chain = row['protein_chain'].split(',')
         else:
             raise ValueError('protein_chain is empty')
-        NA_chain = row['NA_chain'].split(',') if not pd.isnull(row['NA_chain']) else []
-        SM_chain = row['SM_chain'].split(',') if not pd.isnull(row['SM_chain']) else []
+        NA_chain = str(row['NA_chain']).split(',') if not pd.isnull(row['NA_chain']) else []
+        SM_chain = str(row['SM_chain']).split(',') if not pd.isnull(row['SM_chain']) else []
 
         parser = PDB.PDBParser()
         pdb_file = f'{structure_dir}/{apo_pdb}.pdb'
@@ -91,34 +88,33 @@ if __name__ == "__main__":
         NA_inputs = []
         SM_inputs = []
 
-        try:
-            for chain in chains:
-                chain_id = chain.get_id()
-                hhm_file = os.path.join(hhm_dir, f'{apo_pdb}_{chain_id}.hhm')
-                rigidity_file = os.path.join(rigidity_dir, f'rigidity_{apo_pdb}.txt')
+        #try:
+        for chain in chains:
+            chain_id = chain.get_id()
+            hhm_file = os.path.join(hhm_dir, f'{apo_pdb}_{chain_id}.hhm')
 
-                if chain_id in protein_chain:
-                    if os.path.isfile(hhm_file) and os.path.isfile(pdb_file):
-                        #print('loading:', hhm_file, pdb_file)
-                        protein_inputs.append(load_protein(hhm_file, rigidity_file, pdb_file, chain_id))
-                    else:
-                        fail_list.append((apo_pdb, chain_id))
-                        raise ValueError('file not exist', apo_pdb, chain_id)
-                elif chain_id in NA_chain:
-                    NA_inputs.append(load_nucleic_acid(pdb_file, chain_id))
-                elif chain_id in SM_chain:
-                    SM_inputs.append(load_sm(pdb_file, chain_id))
-        
-            ### merging protein, NA, and SM ###
-            embedding = [protein.construct_embedding() for protein in protein_inputs] # RawInputData object method
-            embed_mtx = torch.cat(embedding, dim=0) #FIXME: not include index and residue type
-        except Exception as e:
-            print(e)
-            continue
+            if chain_id in protein_chain:
+                if os.path.isfile(hhm_file) and os.path.isfile(pdb_file):
+                    #print('loading:', hhm_file, pdb_file)
+                    protein_inputs.append(load_protein(hhm_file, pdb_file, chain_id))
+                else:
+                    fail_list.append((apo_pdb, chain_id))
+                    raise ValueError('file not exist', apo_pdb, chain_id)
+            elif chain_id in NA_chain:
+                NA_inputs.append(load_nucleic_acid(pdb_file, chain_id))
+            elif chain_id in SM_chain:
+                SM_inputs.append(load_sm(pdb_file, chain_id))
+    
+        ### merging protein, NA, and SM ###
+        embedding = [protein.construct_embedding() for protein in protein_inputs]
+        embed_mtx = torch.cat(embedding, dim=0) #FIXME: not include index and residue type
+        #except Exception as e:
+        #    print(e)
+        #    continue
 
         ### find contact residues of NA and SM ###
         chain_list = [chain for chain in structure.get_chains() if chain.id in protein_chain]
-        res_list = Selection.unfold_entities(chain_list, 'R') #contains all chains from protein
+        res_list = Selection.unfold_entities(chain_list, 'R')
 
         res_idx_list = []
         for res in res_list:
@@ -138,20 +134,16 @@ if __name__ == "__main__":
 
         contact_ensemble.insert(0, res_idx_list)
         contact_mtx = np.concatenate(contact_ensemble, axis=1) if len(contact_ensemble) > 1 else contact_ensemble[0]
-        #print('contact_mtx shape:', contact_mtx.shape)
-        contact_tensor = torch.tensor(contact_mtx, dtype=torch.long).flatten()
 
-        #print('contact_tensor shape:', contact_tensor.shape)
+        contact_tensor = torch.tensor(contact_mtx, dtype=torch.long).flatten()
         encoded_tensor = F.one_hot(contact_tensor, num_classes=len(chemdata.num2aa))
-        #print('one-hot encoded_tensor shape:', encoded_tensor.shape)
 
         encoded_tensor = encoded_tensor.view(contact_mtx.shape[0], -1, encoded_tensor.shape[1])
-        #print('encoded_tensor reshape:', encoded_tensor.shape)
         encoded_tensor = torch.sum(encoded_tensor, dim=1)
         encoded_tensor = torch.log(encoded_tensor + 1) # apply log(e) to elements
 
         protein_embedding = torch.cat((embed_mtx, encoded_tensor), dim=1)
-        #print('protein_embedding shape:', protein_embedding.shape)
+        print('protein_embedding:', protein_embedding.shape)
 
         #save to file
         res_idx = [res.id[1] for res in res_list]

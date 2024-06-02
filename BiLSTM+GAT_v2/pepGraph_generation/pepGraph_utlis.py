@@ -26,7 +26,7 @@ class ChemData():
         self.num2btype = [0,1,2,3,4,5,6,7] # UNK, SINGLE, DOUBLE, TRIPLE, AROMATIC, 
                                             # PEPTIDE/NA BACKBONE, PROTEIN-LIGAND (PEPTIDE), OTHER
 
-        self.NATYPES = ['DA','DC','DG','DT', 'DX', 'RA','RC','RG','RU', 'RX']
+        self.NATYPES = ['DA','DC','DG','DT', 'DU', 'A', 'T', 'C', 'G', 'U']
         self.STDAAS = ['ALA','ARG','ASN','ASP','CYS',
             'GLN','GLU','GLY','HIS','ILE',
             'LEU','LYS','MET','PHE','PRO',
@@ -46,10 +46,10 @@ class ChemData():
             'LEU','LYS','MET','PHE','PRO',
             'SER','THR','TRP','TYR','VAL',
             'UNK',
-            'DA','DC','DG','DT', 'DX',
-            'RA','RC','RG','RU', 'RX', 
+            'A','C','G','T', 'U',
             'Br', 'F', 'Cl','I',
-            'C', 'N', 'O', 'S', 'P', 'Si',
+            'C', 'N', 'O', 'S', 'P',
+            'ZN', 'MG', 'NA', 'CA', 'K', 'FE',
             'ATM'
         ]
         self.num2aa = [item.upper() for item in self.num2aa]
@@ -127,15 +127,15 @@ class RawInputData:
     res_polarity: torch.Tensor = field(default_factory=torch.Tensor)
     res_charge: torch.Tensor = field(default_factory=torch.Tensor)
     SASA: torch.Tensor = field(default_factory=torch.Tensor)
-    rigidity: torch.Tensor = field(default_factory=torch.Tensor)
     hse: torch.Tensor = field(default_factory=torch.Tensor)
+    dihedrals: torch.Tensor = field(default_factory=torch.Tensor)
+    orientations: torch.Tensor = field(default_factory=torch.Tensor)
     seq_data: dict = field(default_factory=dict)  # [id]: {'token_type', 'coord'}
     type_label: str = ''
 
     def construct_embedding(self):
         # construct embedding
-        embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.hse), dim=1)
-        # 240410 delete self.rigidity from the embedding
+        embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.hse, self.dihedrals, self.orientations), dim=1)
         return embedding
     
     def merge(self, data):
@@ -331,6 +331,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
 
     model = get_bio_model(pdb_file)
     residue_data = {}
+    residue_coord = []
     res_seq = []
     residue_list = Selection.unfold_entities(model, 'R')
     for res in residue_list:
@@ -344,18 +345,17 @@ def load_protein(hhm_file, pdb_file, chain_id):
         else:
             print(f'Non-standard AA found: {res_name}')
 
-        ca_atom = res['CA'] if 'CA' in res else None #TODO: record N, Ca, C, coords
-        if ca_atom is None: 
-            raise ValueError(f'CA atom not found in the residue at {res_id}')
-            #ca_coord = [0, 0, 0]
-        else:
-            ca_coord = ca_atom.get_coord()
+        print(res_id, res_name)
+        N_coord = list(res['N'].get_coord())
+        Ca_coord = list(res['CA'].get_coord())
+        C_coord = list(res['C'].get_coord())
+        res_coord = [N_coord, Ca_coord, C_coord]
+        residue_coord.append(res_coord)
         residue_data[res_id] = {
             'token_type': res_name,
-            'coord': ca_coord,
+            'coord': Ca_coord,  # used for appending heteroatom embedding to near residue
         }
 
-    rigidity = torch.tensor([])
     max_len = len(res_seq)
 
     # sequence-based features
@@ -370,7 +370,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
     hse_dict = get_hse(model, chain_id)
     SASA = biotite_SASA(pdb_file, chain_id)[:max_len]
     end_time = time.time()
-    print('structure feat. done', end_time - start_time)
+    print('physical feat. done', end_time - start_time)
     start_time = end_time
 
     # MSA-based features
@@ -380,13 +380,15 @@ def load_protein(hhm_file, pdb_file, chain_id):
     start_time = end_time
 
     # structura based features: dihedral angels and orientations
-    dihedrals = _dihedrals(coords)
-    orientations = _orientations(Ca_coords)
+    dihedrals = _dihedrals(torch.as_tensor(residue_coord))
+    orientations = _orientations(torch.as_tensor(residue_coord))
+    end_time = time.time()
+    print('structure feat. done', end_time - start_time)
+    start_time = end_time
 
     # check the sequence match among feat.
     res_seq = ''.join(res_seq)
     if hhm_seq == res_seq:
-        print('Sequence match between HMM and DSSP')
         pass
     elif hhm_seq[:-1] == res_seq:
         hhm_mtx = hhm_mtx[:-1]
@@ -402,12 +404,14 @@ def load_protein(hhm_file, pdb_file, chain_id):
             corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])
 
     print('protein length:', len(residue_data.keys()))
-    print('dssp length:', SASA.shape)
+    print('SASA length:', SASA.shape)
     print('hse length:', corrected_hse_mtx.shape)
     print('HDMD length:', HDMD.shape)
     print('res_charge length:', res_charge.shape)
     print('res_polarity length:', res_polarity.shape)
     print('hhm length:', hhm_mtx.shape)
+    print('dihedrals length:', dihedrals.shape)
+    print('orientations length:', orientations.shape)
 
     return RawInputData(
         msa = torch.tensor(hhm_mtx, dtype = torch.float32),
@@ -415,8 +419,9 @@ def load_protein(hhm_file, pdb_file, chain_id):
         res_polarity = torch.tensor(res_polarity, dtype = torch.float32),
         res_charge = torch.tensor(res_charge, dtype = torch.float32),
         SASA = torch.tensor(SASA, dtype = torch.float32).reshape(-1, 1),
-        rigidity = torch.tensor(rigidity, dtype = torch.float32),
         hse = torch.tensor(corrected_hse_mtx, dtype = torch.float32),
+        dihedrals = torch.tensor(dihedrals, dtype = torch.float32),
+        orientations = torch.tensor(orientations, dtype = torch.float32),
         seq_data = residue_data,
         type_label = 'protein'
     )
@@ -454,8 +459,9 @@ def load_sm(pdb_file, preset_chain_id):
         res_polarity = None,
         res_charge = None,
         SASA = None,
-        rigidity = None,
         hse = None,
+        dihedrals = None,
+        orientations = None,
         seq_data = atom_data,
         type_label = 'ligand'
     )
@@ -472,7 +478,18 @@ def load_nucleic_acid(pdb_file, chain_id):
             na_name = res.get_resname().strip()
 
             if na_name not in chemdata.NATYPES:
-                continue
+                na_name = 'UNK'
+            else:
+                if na_name in ['DA', 'A', 'RA']:
+                    na_name = 'A'
+                elif na_name in ['DC', 'C', 'RC']:
+                    na_name = 'C'
+                elif na_name in ['DG', 'G', 'RG']:
+                    na_name = 'G'
+                elif na_name in ['DT', 'T']:
+                    na_name = 'T'
+                elif na_name in ['RU', 'U']:
+                    na_name = 'U'
 
             atom_coord = [atom.get_coord() for atom in res.get_atoms()]
             na_coord = np.mean(atom_coord, axis=0)
@@ -487,8 +504,9 @@ def load_nucleic_acid(pdb_file, chain_id):
         res_polarity = None,
         res_charge = None,
         SASA = None,
-        rigidity = None,
         hse = None,
+        dihedrals = None,
+        orientations = None,
         seq_data = na_data,
         type_label = 'NA'
     )
@@ -501,9 +519,8 @@ def _normalize(tensor, dim=-1):
     return torch.nan_to_num(
         torch.div(tensor, torch.norm(tensor, dim=dim, keepdim=True)))
 
-def _dihedrals(self, X, eps=1e-7):
+def _dihedrals(X, eps=1e-7):
     # From https://github.com/jingraham/neurips19-graph-protein-design
-    
     X = torch.reshape(X[:, :3], [3*X.shape[0], 3])
     dX = X[1:] - X[:-1]
     U = _normalize(dX, dim=-1)
@@ -525,16 +542,19 @@ def _dihedrals(self, X, eps=1e-7):
     D = torch.reshape(D, [-1, 3])
     # Lift angle representations to the circle
     D_features = torch.cat([torch.cos(D), torch.sin(D)], 1)
+    
     return D_features
 
 def _orientations(X):
     # From https://github.com/drorlab/gvp
+    X = X[:,1] # take CA atom coordinates
+
     forward = _normalize(X[1:] - X[:-1])
     backward = _normalize(X[:-1] - X[1:])
     forward = F.pad(forward, [0, 0, 0, 1])
     backward = F.pad(backward, [0, 0, 1, 0])
-    return torch.cat([forward.unsqueeze(-2), backward.unsqueeze(-2)], -2)
 
+    return torch.cat([forward, backward], -1)
 
 # graph modification
 def neighbor_search(node_list, edge_index):

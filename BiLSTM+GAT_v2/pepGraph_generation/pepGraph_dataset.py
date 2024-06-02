@@ -54,7 +54,7 @@ class res(object):
 class pep(object):
     _registry = []
     #protein_embedding = {}
-    def __init__(self, i, pep_sequence, chain, start_pos, end_pos, hdx_value, log_t):
+    def __init__(self, i, pep_sequence, chain, start_pos, end_pos, hdx_value):
         self._registry.append(self)
         self.i = i
         self.sequence = pep_sequence
@@ -66,12 +66,13 @@ class pep(object):
         self.node_embedding = None
         self.seq_embedding = None
         self.hdx_value = hdx_value
-        self.log_t = log_t
 
 def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains): # read the HDX table file and return the residue information as node_list
     pep._registry = [] # reset the peptide registry
     npep = 0
     res_chainsplit = {}
+    timepoints = [1.35, 2.85] #predefined log_t boundaries according to k-mean clustering results
+
     for residue in res._registry:
         if residue.chain_id not in res_chainsplit.keys():
             res_chainsplit[residue.chain_id] = []
@@ -82,24 +83,32 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
     for index, (protein, state, chain) in enumerate(zip(proteins, states, chains)):
         temp_HDX_df = HDX_df[(HDX_df['state']==state) & (HDX_df['protein']==protein)]
         temp_HDX_df = temp_HDX_df.sort_values(by=['start', 'end'], ascending=[True, True])
-        chain = protein_chains.index(chain)
-        print(protein, state, chain, temp_HDX_df.shape)
+        chain_index = protein_chains.index(chain)
+        print(protein, state, chain_index, temp_HDX_df.shape)
+
+        clusters = [temp_HDX_df[temp_HDX_df['log_t'] < timepoints[0]],
+                    temp_HDX_df[(temp_HDX_df['log_t'] >= timepoints[0]) & (temp_HDX_df['log_t'] < timepoints[1])],
+                    temp_HDX_df[temp_HDX_df['log_t'] >= timepoints[1]]]
 
         HDX_grouped = temp_HDX_df.groupby(['start', 'end']) 
         for name, group in HDX_grouped:
             sequence = group['sequence'].iloc[0].strip()
             start_pos = int(name[0])+correction[index]
             end_pos = int(name[1])+correction[index]
-            hdx_value = group['%d'].mean()/100 # average of RFU
-            log_t = 0
 
-            res_seq = [res for res in res_chainsplit[chain] if start_pos <= res.i <= end_pos]
+            cluster_rfu_means = []
+            for cluster in clusters:
+                cluster_group = cluster[(cluster['start']==name[0]) & (cluster['end']==name[1])]
+                mean_rfu = cluster_group['RFU'].mean()/100 if not cluster_group.empty else -1
+                cluster_rfu_means.append(mean_rfu)
+
+            res_seq = [res for res in res_chainsplit[chain_index] if start_pos <= res.i <= end_pos]
             pdb_seq = ''.join([protein_letters_3to1[res.name] for res in res_seq])
             if pdb_seq != sequence:
                 print("sequence mismatch: chain:", chain, "pdb_Seq:", pdb_seq, 'HDX_seq:', sequence)
                 continue
             else:
-                peptide = pep(npep, sequence, chain, start_pos, end_pos, hdx_value, log_t)
+                peptide = pep(npep, sequence, chain_index, start_pos, end_pos, cluster_rfu_means)
                 for residue in res_seq:
                     residue.clusters.append(npep)
                     peptide.clusters.append(residue.i)
@@ -286,10 +295,9 @@ class pepGraph(Dataset):
         self.keys = keys
         self.root_dir = root_dir
         self.embedding_dir = os.path.join(root_dir, 'embedding_files')
-        #self.proflex_dir = os.path.join(root_dir, 'proflex_files')
         self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge_minus')
+        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
 
         self.max_len = max_len
         self.nfeature = nfeature
@@ -310,7 +318,7 @@ class pepGraph(Dataset):
         pep._registry = []
 
         database_id = self.keys[0][index].strip()
-        apo_identifier = self.keys[4][index].strip().split('.')[0]
+        apo_identifier = self.keys[4][index].strip().split('.')[0].upper()
 
         protein = self.keys[1][index]
         state = self.keys[2][index]
@@ -325,7 +333,7 @@ class pepGraph(Dataset):
             return None
 
         pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
-        target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}.xlsx')
+        target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}_revised.xlsx')
         embedding_fpath = os.path.join(self.embedding_dir, f'{apo_identifier}.pt')
         
         if not os.path.isfile(target_HDX_fpath) and self.truncation_window_size is None:
@@ -354,7 +362,6 @@ class pepGraph(Dataset):
             # filter the HDX table
             HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
             HDX_df = HDX_df[HDX_df['sequence'].str.len() < self.max_len]
-            HDX_df = HDX_df[HDX_df['%d']>0]
             HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
             HDX_df = HDX_df.reset_index(drop=True)
             print('after filtering:', HDX_df.shape)
@@ -381,8 +388,8 @@ class pepGraph(Dataset):
                 for i in range(0, len(chain_res_id) - self.truncation_window_size, stride):
                     seq = ''.join([protein_letters_3to1[res] for res in chain_res_name[i:i+self.truncation_window_size]])
                     start_pos, end_pos = chain_res_id[i], chain_res_id[i+self.truncation_window_size-1]
-                    hdx_value, log_t = 0, 0
-                    peptide = pep(npep, seq, chain_label, start_pos, end_pos, hdx_value, log_t)
+                    hdx_value = -1
+                    peptide = pep(npep, seq, chain_label, start_pos, end_pos, hdx_value)
                     for j in range(len(seq)):
                         peptide.clusters.append(chain_res_id[i+j])
                     npep += 1

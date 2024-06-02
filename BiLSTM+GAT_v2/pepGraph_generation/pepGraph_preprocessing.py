@@ -9,14 +9,14 @@ import torch
 from tqdm import tqdm
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Fullset'
-    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge_minus'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
+    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data_oldVer.xlsx', sheet_name='Sheet1')
-    df = df.dropna(subset=['chain_identifier'])
-    apo_identifier = df['apo_identifier'].astype(str).unique()
+    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet1')
+    df = df.dropna(subset=['structure_file'])
+    apo_identifier = df['structure_file'].astype(str).unique()
 
     protein, state, chain_identifier = [], [], []
     correction = []
@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     #process HDX data by apo_identifier (pdb structures)
     for i, temp_apo in enumerate(apo_identifier):
-        temp_df = df[(df['apo_identifier'] == temp_apo)]
+        temp_df = df[(df['structure_file'] == temp_apo)]
         temp_protein = temp_df['protein'].astype(str).to_list()
         temp_state = temp_df['state'].astype(str).to_list()
         temp_chain = temp_df['chain_identifier'].astype(str).to_list()
@@ -47,7 +47,7 @@ if __name__ == '__main__':
     print('total number of keys:', len(database_id))
     print(len(apo_identifier))
 
-    graph_dataset = pepGraph(keys, root_dir, nfeature = 44, min_distance = 5.0, max_distance = 10.0,
+    graph_dataset = pepGraph(keys, root_dir, nfeature = 56, min_distance = 5.0, max_distance = 10.0,
                              truncation_window_size = None) # distance cutoff: distance between CA atoms, consider 10 or 15
     
     count = 0

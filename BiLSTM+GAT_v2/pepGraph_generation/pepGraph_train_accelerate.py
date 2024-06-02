@@ -1,6 +1,7 @@
 ### training ###
 import os
 import sys
+from tqdm import tqdm
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -69,7 +70,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
 
         ### validation and early-stopping
-        if epoch % 10 == 0:
+        if epoch % 5 == 0:
             model.eval()
             epoch_val_losses = []
             with torch.no_grad():
@@ -85,7 +86,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
 
             if data_log:
                 experiment.log_metric('val_loss', val_losses_mean, step = epoch)
-
+            '''
             if val_losses_mean < best_val_loss:
                 best_val_loss = val_losses_mean
                 trigger_times = 0
@@ -95,17 +96,18 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 if trigger_times >= 5:
                     print('Early stopping')
                     break
-
+            '''
+    torch.save(model.state_dict(), f'{result_fpath}.pth')
     return rmse_train_list, rp_train
 
 def main(training_args):
     ##################################### initial setting ##################################### 
-    root_dir = "/home/lwang/models/HDX_LSTM/data/Fullset"
-    summary_HDX_file = f'{root_dir}/merged_data_oldVer.xlsx'
+    root_dir = "/home/lwang/models/HDX_LSTM/data/Latest_set"
+    summary_HDX_file = f'{root_dir}/merged_data.xlsx'
     hdx_df = pd.read_excel(summary_HDX_file, sheet_name='Sheet1')
-    hdx_df = hdx_df.dropna(subset=['chain_identifier'])
+    hdx_df = hdx_df.dropna(subset=['structure_file'])
 
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge_minus')
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', 'cluster1')
     result_dir = training_args['result_dir']
     result_fpath = os.path.join(training_args['result_dir'], training_args['file_name'])
     if not os.path.exists(result_dir):
@@ -115,10 +117,13 @@ def main(training_args):
     ### data preparation ###
     apo_input = []
     complex_input = []
-    hdx_df = hdx_df.drop_duplicates(subset=['apo_identifier'])
-    for row_id, row in hdx_df.iterrows():
-        pdb = row['apo_identifier'].strip().split('.')[0]
-        pepGraph_file = f'{pepGraph_dir}/{pdb}.pt'
+    hdx_df = hdx_df.drop_duplicates(subset=['structure_file'])
+
+    '''
+    print('data loading')
+    for row_id, row in tqdm(hdx_df.iterrows()):
+        pdb = row['structure_file'].strip().split('.')[0].upper()
+        pepGraph_file = f'{pepGraph_dir}/{pdb}.pt.pt'
         if os.path.isfile(pepGraph_file):
             pepGraph_ensemble = torch.load(pepGraph_file)
             if row['complex_state'] == 'single':
@@ -130,18 +135,19 @@ def main(training_args):
 
     print('length of apo data:', len(apo_input))
     print('length of complex data:', len(complex_input))
+    '''
 
     ### model initialization ###
     torch.cuda.empty_cache()
 
     #GearNet
-    model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
-                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
+    #model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
+    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
     
     #GearNet-Edge
-    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
-    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+    model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
+                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(training_args).to(device)
@@ -155,6 +161,7 @@ def main(training_args):
         print(f'-         cross validation {i}          -')
         print(f'-----------------------------------------')
 
+        '''
         train_apo, val_apo = train_test_split(apo_input, test_size=0.3, random_state=42)
         train_complex, val_complex = train_test_split(complex_input, test_size=0.3, random_state=42)
 
@@ -162,6 +169,10 @@ def main(training_args):
         val_set = data.Protein.pack(val_apo + val_complex)
         train_set.view = 'residue'
         val_set.view = 'residue'
+        '''
+
+        train_set = torch.load('/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/cluster1/train.pt')
+        val_set = torch.load('/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/cluster1/val.pt')
 
         train_loader = data.DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  data.DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
@@ -179,7 +190,7 @@ if __name__ == "__main__":
 
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
-            'num_epochs':300,
+            'num_epochs':150,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
@@ -191,15 +202,15 @@ if __name__ == "__main__":
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
 
-            'feat_in_dim': 44, 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'feat_in_dim': 56, 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
             'GNN_out_dim': 16, 'LSTM_out_dim': 16,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
-            'result_dir': '/home/lwang/models/HDX_LSTM/results/240509_avgRFU',
-            'file_name': 'best_model_GearNet_minus',
+            'result_dir': '/home/lwang/models/HDX_LSTM/results/240601_finalExp',
+            'file_name': 'model_GearNetEdge_epoch150',
             'data_log': True,
             'device': device
     }
