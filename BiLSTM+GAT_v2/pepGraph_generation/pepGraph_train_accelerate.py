@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchdrug import data
 from GearNet import GearNet
-from pepGraph_model import MixBiLSTM_GearNet
+from pepGraph_model import MixBiLSTM_GearNet, BiLSTM
 
 import pandas as pd
 import numpy as np
@@ -37,8 +37,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            outputs = model(graph_batch, graph_batch.residue_feature.float())
-            #outputs = model(graph_batch)
+            #outputs = model(graph_batch, graph_batch.residue_feature.float()) # for GearNet and GearNet-Edge
+            #outputs = model(graph_batch) # for MixBiLSTM_GearNet
+            outputs = model(graph_batch.seq_embedding) # for BiLSTM
 
             train_loss = loss_fn(outputs, targets)
             optimizer.zero_grad()
@@ -77,8 +78,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch.y
-                    outputs = model(graph_batch, graph_batch.residue_feature.float())
+                    #outputs = model(graph_batch, graph_batch.residue_feature.float())
                     #outputs = model(graph_batch)
+                    outputs = model(graph_batch.seq_embedding)
 
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
@@ -145,12 +147,15 @@ def main(training_args):
     #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
     
     #GearNet-Edge
-    model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
-                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
+    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(training_args).to(device)
+
+    #BiLSTM
+    model = BiLSTM(training_args).to(device)
 
     ### training ###
     loss_fn = nn.BCELoss()    
@@ -187,7 +192,6 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':150,
@@ -197,20 +201,21 @@ if __name__ == "__main__":
             'GNN_type': 'GAT',
             'num_GNN_layers': 3,
             'cross_validation_num': 1,
-            'num_workers': 4
+            'num_workers': 4,
+            'model_name': 'model_Bilstm_epoch150_cluster1'
     }
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
 
             'feat_in_dim': 56, 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
-            'GNN_out_dim': 16, 'LSTM_out_dim': 16,
+            'GNN_out_dim': 64, 'LSTM_out_dim': 64,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240601_finalExp',
-            'file_name': 'model_GearNetEdge_epoch150',
+            'file_name': 'model_Bilstm_epoch150_cluster1',
             'data_log': True,
             'device': device
     }
