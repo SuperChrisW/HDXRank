@@ -55,7 +55,7 @@ class BiLSTM(nn.Module):
         x, _ = self.lstm(x)  # Reshape for LSTM
         x = self.dropout(x[:, -1, :])  # Use output of last LSTM sequence
         x = F.relu(self.fc1(x))
-        x = F.sigmoid(self.output_fc(x)).squeeze(-1) # use if the model only has bilstm module
+        #x = F.sigmoid(self.output_fc(x)).squeeze(-1) # use if the model only has bilstm module
         return x
 
 class GearNet(nn.Module):

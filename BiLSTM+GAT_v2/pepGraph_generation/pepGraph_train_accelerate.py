@@ -37,9 +37,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            #outputs = model(graph_batch, graph_batch.residue_feature.float()) # for GearNet and GearNet-Edge
+            outputs = model(graph_batch, graph_batch.residue_feature.float()) # for GearNet and GearNet-Edge
             #outputs = model(graph_batch) # for MixBiLSTM_GearNet
-            outputs = model(graph_batch.seq_embedding) # for BiLSTM
+            #outputs = model(graph_batch.seq_embedding) # for BiLSTM
 
             train_loss = loss_fn(outputs, targets)
             optimizer.zero_grad()
@@ -78,9 +78,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch.y
-                    #outputs = model(graph_batch, graph_batch.residue_feature.float())
+                    outputs = model(graph_batch, graph_batch.residue_feature.float())
                     #outputs = model(graph_batch)
-                    outputs = model(graph_batch.seq_embedding)
+                    #outputs = model(graph_batch.seq_embedding)
 
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
@@ -109,7 +109,7 @@ def main(training_args):
     hdx_df = pd.read_excel(summary_HDX_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['structure_file'])
 
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', 'cluster1')
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', training_args['cluster'])
     result_dir = training_args['result_dir']
     result_fpath = os.path.join(training_args['result_dir'], training_args['file_name'])
     if not os.path.exists(result_dir):
@@ -147,15 +147,15 @@ def main(training_args):
     #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
     
     #GearNet-Edge
-    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-    #                          num_relation=7, edge_input_dim=59, num_angle_bin=8,
-    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+    model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
+                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
 
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(training_args).to(device)
 
     #BiLSTM
-    model = BiLSTM(training_args).to(device)
+    #model = BiLSTM(training_args).to(device)
 
     ### training ###
     loss_fn = nn.BCELoss()    
@@ -176,8 +176,8 @@ def main(training_args):
         val_set.view = 'residue'
         '''
 
-        train_set = torch.load('/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/cluster1/train.pt')
-        val_set = torch.load('/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/cluster1/val.pt')
+        train_set = torch.load(f'/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/{training_args["cluster"]}/train.pt')
+        val_set = torch.load(f'/home/lwang/models/HDX_LSTM/data/Latest_set/graph_ensemble_GearNetEdge/{training_args["cluster"]}/val.pt')
 
         train_loader = data.DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  data.DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
@@ -192,6 +192,7 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
+    cluster = 'cluster0'
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':150,
@@ -202,7 +203,7 @@ if __name__ == "__main__":
             'num_GNN_layers': 3,
             'cross_validation_num': 1,
             'num_workers': 4,
-            'model_name': 'model_Bilstm_epoch150_cluster1'
+            'model_name': f'model_GearNetEdgeTrue_epoch150_{cluster}'
     }
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
@@ -215,9 +216,10 @@ if __name__ == "__main__":
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240601_finalExp',
-            'file_name': 'model_Bilstm_epoch150_cluster1',
+            'file_name': f'model_GearNetEdgeTrue_epoch150_{cluster}',
             'data_log': True,
-            'device': device
+            'device': device,
+            'cluster': cluster
     }
 
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  

@@ -97,10 +97,16 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
             end_pos = int(name[1])+correction[index]
 
             cluster_rfu_means = []
-            for cluster in clusters:
-                cluster_group = cluster[(cluster['start']==name[0]) & (cluster['end']==name[1])]
-                mean_rfu = cluster_group['RFU'].mean()/100 if not cluster_group.empty else -1
-                cluster_rfu_means.append(mean_rfu)
+            #for cluster in clusters:
+
+            cluster = clusters[0]
+            cluster_group = cluster[(cluster['start']==name[0]) & (cluster['end']==name[1])]
+
+            if not cluster_group.empty:
+                mean_rfu = cluster_group['RFU'].mean()/100
+            else:
+                continue
+            cluster_rfu_means.append(mean_rfu)
 
             res_seq = [res for res in res_chainsplit[chain_index] if start_pos <= res.i <= end_pos]
             pdb_seq = ''.join([protein_letters_3to1[res.name] for res in res_seq])
@@ -108,7 +114,7 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
                 print("sequence mismatch: chain:", chain, "pdb_Seq:", pdb_seq, 'HDX_seq:', sequence)
                 continue
             else:
-                peptide = pep(npep, sequence, chain_index, start_pos, end_pos, cluster_rfu_means)
+                peptide = pep(npep, sequence, chain_index, start_pos, end_pos, cluster_rfu_means[0])
                 for residue in res_seq:
                     residue.clusters.append(npep)
                     peptide.clusters.append(residue.i)
@@ -297,7 +303,7 @@ class pepGraph(Dataset):
         self.embedding_dir = os.path.join(root_dir, 'embedding_files')
         self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge')
+        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', 'cluster0')
 
         self.max_len = max_len
         self.nfeature = nfeature
@@ -328,9 +334,9 @@ class pepGraph(Dataset):
         protein_chains = self.keys[7][index].split(',')
 
         print("processing",database_id, apo_identifier)
-        if os.path.isfile(os.path.join(self.save_dir, f'{apo_identifier}.pt')):
-            print('skip')
-            return None
+        #if os.path.isfile(os.path.join(self.save_dir, f'{apo_identifier}.pt')):
+        #    print('skip')
+        #    return None
 
         pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
         target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}_revised.xlsx')
