@@ -40,7 +40,7 @@ class BiLSTM(nn.Module):
         self.fc1.reset_parameters()
 
     def forward(self, x):
-        x = x.reshape(-1, 1, 30, self.feat_in_dim+1)
+        #x = x.reshape(-1, 1, 30, self.feat_in_dim+1)
         x = x.permute(0, 1, 3, 2)
         ### Convolutional layers
         x = F.relu(self.bn1(self.conv1(x)))
@@ -187,8 +187,12 @@ class MixBiLSTM_GearNet(nn.Module):
         self.batch_size = args['batch_size']
 
         self.bilstm = BiLSTM(args)
-        self.gnn = GearNet(input_dim = self.feat_in_dim+self.topo_in_dim, hidden_dims = [512,512,512],
-                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True, args = args)
+        #self.gnn = GearNet(input_dim = self.feat_in_dim+self.topo_in_dim, hidden_dims = [512,512,512],
+        #            num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True, args = args)
+
+        self.gnn = GearNet(input_dim=self.feat_in_dim+self.topo_in_dim, hidden_dims=[512, 512, 512], 
+                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
+                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu')
 
         self.attention_fc = nn.Linear(1, 16)
         self.fc1 = nn.Linear(16, self.hidden_dim)
@@ -205,6 +209,8 @@ class MixBiLSTM_GearNet(nn.Module):
         seq_embedding = graph_data.seq_embedding.reshape(-1, 1, 30, self.feat_in_dim+1) # one extra feat: sequence length/ max_len
         x_bilstm = self.bilstm(seq_embedding)
         x_gearnet = self.gnn(graph_data, graph_data.residue_feature.float())
+        print(x_bilstm.shape, x_gearnet.shape)
+
         x_integrated = torch.cat((x_bilstm, x_gearnet), dim=1).unsqueeze(1).transpose(1, 2) 
 
         scores = self.attention_fc(x_integrated) # attention across feature dimensions
