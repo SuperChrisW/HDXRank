@@ -49,7 +49,7 @@ def merge_inputs(inputs_list):
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_test/hdock'
 
     hhm_dir = os.path.join(root_dir, 'hhm_files')
     save_dir = os.path.join(root_dir, 'embedding_files')
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet1')
+    df = pd.read_excel(f'{root_dir}/hdock.xlsx', sheet_name='Sheet1') ## sheet2 is the sheet for test set
     df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
     fail_list = []
     chemdata = ChemData()

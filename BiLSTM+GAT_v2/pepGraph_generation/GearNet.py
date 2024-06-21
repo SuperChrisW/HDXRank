@@ -39,6 +39,7 @@ class GearNet(nn.Module):
         self.short_cut = short_cut
         self.concat_hidden = concat_hidden
         self.batch_norm = batch_norm
+        self.dropout = nn.Dropout(p = 0.5)
 
         self.layers = nn.ModuleList()
         for i in range(len(self.dims) - 1):
@@ -108,6 +109,7 @@ class GearNet(nn.Module):
                 edge_input = edge_hidden
             if self.batch_norm:
                 hidden = self.batch_norms[i](hidden)
+            hidden = self.dropout(hidden)
             hiddens.append(hidden)
             layer_input = hidden
 

@@ -345,7 +345,6 @@ def load_protein(hhm_file, pdb_file, chain_id):
         else:
             print(f'Non-standard AA found: {res_name}')
 
-        print(res_id, res_name)
         N_coord = list(res['N'].get_coord())
         Ca_coord = list(res['CA'].get_coord())
         C_coord = list(res['C'].get_coord())

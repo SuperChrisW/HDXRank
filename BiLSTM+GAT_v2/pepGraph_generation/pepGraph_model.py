@@ -38,6 +38,7 @@ class BiLSTM(nn.Module):
         self.conv2.reset_parameters()
         self.lstm.reset_parameters()
         self.fc1.reset_parameters()
+        self.output_fc.reset_parameters()
 
     def forward(self, x):
         #x = x.reshape(-1, 1, 30, self.feat_in_dim+1)
@@ -55,7 +56,7 @@ class BiLSTM(nn.Module):
         x, _ = self.lstm(x)  # Reshape for LSTM
         x = self.dropout(x[:, -1, :])  # Use output of last LSTM sequence
         x = F.relu(self.fc1(x))
-        #x = F.sigmoid(self.output_fc(x)).squeeze(-1) # use if the model only has bilstm module
+        x = F.sigmoid(self.output_fc(x)).squeeze(-1) # use if the model only has bilstm module
         return x
 
 class GearNet(nn.Module):
@@ -220,3 +221,43 @@ class MixBiLSTM_GearNet(nn.Module):
         x = F.relu(self.fc1(x_integrated)) # fully connected layer
         x = F.sigmoid(self.fc2(x))
         return x.squeeze(-1)
+    
+class GCN(nn.Module):
+    def __init__(self, args):
+        super(GCN, self).__init__()
+        self.feat_in_dim = args['feat_in_dim']
+        self.topo_in_dim = args['topo_in_dim']
+        self.dims = [self.feat_in_dim+self.topo_in_dim] + list(args['hidden_dims'])
+        self.module_out_dim = args['GNN_out_dim']
+        self.batch_size = args['batch_size']
+
+        self.layers = nn.ModuleList()
+        for i in range(len(self.dims) - 1):
+            self.layers.append(layers.GraphConv(self.dims[i], self.dims[i + 1], activation='relu'))
+
+        self.batch_norms = nn.ModuleList()
+        for i in range(len(self.dims) - 1):
+            self.batch_norms.append(nn.BatchNorm1d(self.dims[i + 1]))
+
+        self.mlp = layers.MLP(args['hidden_dims'][-1], 1,
+            batch_norm=False, dropout=0, activation = 'relu')
+
+        self.readout = layers.SumReadout()
+        self.dropout = nn.Dropout(p=0.5)
+
+    def forward(self, graph, input):
+        hiddens = []
+        layer_input = input
+
+        for i in range(len(self.layers)):
+            hidden = self.layers[i](graph, layer_input)
+            hidden = self.batch_norms[i](hidden)
+            hidden = self.dropout(hidden)
+            hiddens.append(hidden)
+            layer_input = hidden
+        
+        node_feature = hiddens[-1]
+        graph_feature = self.readout(graph, node_feature)
+        pred = self.mlp(graph_feature).squeeze(-1)
+
+        return nn.functional.sigmoid(pred)

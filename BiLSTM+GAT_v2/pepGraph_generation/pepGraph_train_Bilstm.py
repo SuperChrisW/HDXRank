@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchdrug import data
 from GearNet import GearNet
-from pepGraph_model import MixBiLSTM_GearNet, BiLSTM, GCN
+from pepGraph_model import MixBiLSTM_GearNet, BiLSTM
 
 import pandas as pd
 import numpy as np
@@ -36,15 +36,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            #node_feat = graph_batch.residue_feature[:,30:].float() # remove msa feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:30].float(), graph_batch.residue_feature[:,40:].float()], dim=1) # remove seq feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:40].float(), graph_batch.residue_feature[:,44:].float()], dim=1) # remove physical feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:44].float(), graph_batch.residue_feature[:,56:].float()], dim=1) # remove geometric feat
-            #node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom feat
-            node_feat = graph_batch.residue_feature.float()
-            outputs = model(graph_batch, node_feat) # for GearNet and GearNet-Edge
-            #outputs = model(graph_batch) # for MixBiLSTM_GearNet
-            #outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
+            outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
 
             train_loss = loss_fn(outputs, targets)
             optimizer.zero_grad()
@@ -83,23 +75,14 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch.y
-                    #node_feat = graph_batch.residue_feature[:,30:].float() # remove msa feat
-                    #node_feat = torch.cat([graph_batch.residue_feature[:,:30].float(), graph_batch.residue_feature[:,40:].float()], dim=1) # remove seq feat
-                    #node_feat = torch.cat([graph_batch.residue_feature[:,:40].float(), graph_batch.residue_feature[:,44:].float()], dim=1) # remove physical feat
-                    #node_feat = torch.cat([graph_batch.residue_feature[:,:44].float(), graph_batch.residue_feature[:,56:].float()], dim=1) # remove geometric feat
-                    #node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom feat
-                    node_feat = graph_batch.residue_feature.float()
-                    outputs = model(graph_batch, node_feat) # for GearNet and GearNet-Edge
-                    #outputs = model(graph_batch, graph_batch.residue_feature.float())
-                    #outputs = model(graph_batch)
-                    #outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
+                    outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
 
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
                 val_losses_mean = np.mean(epoch_val_losses)
 
             if data_log:
-                experiment.log_metric('val_loss_hop1', val_losses_mean, step = epoch)
+                experiment.log_metric('val_loss', val_losses_mean, step = epoch)
 
     torch.save(model.state_dict(), f'{result_fpath}.pth')
     return rmse_train_list, rp_train
@@ -113,15 +96,16 @@ def main(training_args):
 
     pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', training_args['cluster'])
     result_dir = training_args['result_dir']
+    result_fpath = os.path.join(training_args['result_dir'], training_args['file_name'])
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
 
     device = training_args['device']
     ### data preparation ###
-    apo_input = []
-    complex_input = []
     hdx_df = hdx_df.drop_duplicates(subset=['structure_file'])
 
+    apo_input = []
+    complex_input = []
     print('data loading')
     for row_id, row in tqdm(hdx_df.iterrows()):
         pdb = row['structure_file'].strip().split('.')[0].upper()
@@ -141,31 +125,20 @@ def main(training_args):
     ### model initialization ###
     torch.cuda.empty_cache()
 
-    #GearNet
-    #model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
-    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
-    
-    #GearNet-Edge
-    #edge_relation = {'KNN':1, 'radius':1, 'seq':4, 'none': 0}
-    #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-    #                          num_relation=7-edge_relation["none"], edge_input_dim=59-edge_relation["none"], num_angle_bin=8,
-    #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
-
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(training_args).to(device)
 
     #BiLSTM
-    #model = BiLSTM(training_args).to(device)
+    model = BiLSTM(training_args).to(device)
 
     ### training ###
     for i in range(config['cross_validation_num']):
-        model = GCN(training_args).to(device)
-        
+        model.reset_parameters()
         loss_fn = nn.BCELoss()    
         optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
 
         print(f'-----------------------------------------')
-        print(f'-         cross validation {i}            -')
+        print(f'-         cross validation {i}          -')
         print(f'-----------------------------------------')
 
         train_apo, val_apo = train_test_split(apo_input, test_size=0.2, random_state=42)
@@ -181,7 +154,7 @@ def main(training_args):
 
         train_loader = data.DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  data.DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
-
+    
         print('length of train_Set:', len(train_set))
         print('length of val_Set:', len(val_set))
 
@@ -196,14 +169,13 @@ def main(training_args):
 
 if __name__ == "__main__":
     cluster = 'cluster2'
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':60,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
-            'dropout': 0.3,
-            'GNN_type': f'model_GCN_epoch60_{cluster}_hop1',
+            'GNN_type': f'model_Bilstm_epoch60_{cluster}',
             'num_GNN_layers': 3,
             'cross_validation_num': 5,
             'num_workers': 4,
@@ -213,14 +185,14 @@ if __name__ == "__main__":
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
             'feat_in_dim': 56 - feat_num["none"], 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
-            'GNN_out_dim': 64, 'LSTM_out_dim': 64, 'hidden_dims': [512, 512, 512],
+            'GNN_out_dim': 64, 'LSTM_out_dim': 64,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge',
-            'file_name': f'model_GCN_epoch60_{cluster}_hop1',
+            'file_name': f'model_Bilstm_epoch60_{cluster}',
             'data_log': True,
             'device': device,
             'cluster': cluster
@@ -236,7 +208,7 @@ if __name__ == "__main__":
    
     if training_args['data_log']:
         experiment.log_parameters(config)
-    
+
     #experiment = ''
     main(training_args)
     torch.cuda.empty_cache()

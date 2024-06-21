@@ -67,7 +67,7 @@ class pep(object):
         self.seq_embedding = None
         self.hdx_value = hdx_value
 
-def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains): # read the HDX table file and return the residue information as node_list
+def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains, cluster_index): # read the HDX table file and return the residue information as node_list
     pep._registry = [] # reset the peptide registry
     npep = 0
     res_chainsplit = {}
@@ -97,11 +97,8 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
             end_pos = int(name[1])+correction[index]
 
             cluster_rfu_means = []
-            #for cluster in clusters:
-
-            cluster = clusters[0]
+            cluster = clusters[cluster_index]
             cluster_group = cluster[(cluster['start']==name[0]) & (cluster['end']==name[1])]
-
             if not cluster_group.empty:
                 mean_rfu = cluster_group['RFU'].mean()/100
             else:
@@ -110,7 +107,7 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains)
 
             res_seq = [res for res in res_chainsplit[chain_index] if start_pos <= res.i <= end_pos]
             pdb_seq = ''.join([protein_letters_3to1[res.name] for res in res_seq])
-            if pdb_seq != sequence:
+            if pdb_seq != sequence: # residue lack/mutation/mismatch in pdb will be filtered out
                 print("sequence mismatch: chain:", chain, "pdb_Seq:", pdb_seq, 'HDX_seq:', sequence)
                 continue
             else:
@@ -141,7 +138,7 @@ def attach_node_attributes(G, embedding_file):
     embedding_data = torch.load(embedding_file)
     protein_embedding = rescale(embedding_data['embedding'].detach().numpy())
     for node in G.nodes():
-        G.nodes[node]['x'] = torch.tensor(protein_embedding[node, :], dtype=torch.float32)
+        G.nodes[node]['x'] = torch.tensor(protein_embedding[node, :], dtype=torch.float32) # revise the feat attached here
     return G
 
 def ResGraph(pdb_file, embedding_file, protein_chain = ['A']): # create networkx and torchdrug graphs
@@ -175,15 +172,17 @@ def add_edges(G, max_distance=10, min_distance=5):
     edge_index = radius_graph(node_coord, r=max_distance, batch=batch, loop=False)
     edge_list = edge_index.t().tolist()
     for u, v in edge_list:
-        G.add_edge(u, v, edge_type='radius_edge')
-    print('add radius edges:', G.number_of_edges())
+        if u < v:
+            G.add_edge(u, v, edge_type='radius_edge')
+    #print('add radius edges:', G.number_of_edges())
 
     # add knn edges
     edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
     edge_list = edge_index.t().tolist()
     for u, v in edge_list:
-        G.add_edge(u, v, edge_type='knn_edge')
-    print('add knn edges:', G.number_of_edges())
+        if u < v:
+            G.add_edge(u, v, edge_type='knn_edge')
+    #print('add knn edges:', G.number_of_edges())
 
     # remove edges with distance smaller than min_distance
     edges_to_remove = []
@@ -195,7 +194,7 @@ def add_edges(G, max_distance=10, min_distance=5):
             if (u,v) not in edges_to_remove:
                 edges_to_remove.append((u, v))
     G.remove_edges_from(edges_to_remove)
-    print('after removing edges:', G.number_of_edges())
+    #print('after removing edges:', G.number_of_edges())
 
     # add sequential edges
     i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
@@ -209,9 +208,10 @@ def add_edges(G, max_distance=10, min_distance=5):
         if (chain,res_id-1) in i2res_id.keys():
             G.add_edge(node, node-1, edge_type='backward_1_edge')
         if (chain,res_id-2) in i2res_id.keys():
-            G.add_edge(node, node-2, edge_type='backward_2_edge')
+            G.add_edge(node, node-2, edge_type='backward_2_edge')  
         G.add_edge(node, node, edge_type='self_edge')
-    print('add sequential edges:', G.number_of_edges())
+    #print('add sequential edges:', G.number_of_edges())
+
     return G
 
 def networkx_to_HeteroG(subG): # convert to pytorch geometric HeteroData
@@ -266,7 +266,8 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
 
     edge_list = []
     bond_type = []
-    edge_type_list = ['radius_edge', 'knn_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge', 'self_edge']
+    edge_type_list = ['knn_edge', 'radius_edge', 'self_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge'] # knn_edge radius_edge
+    # 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge', 'self_edge'
     for u, v, attrs in G.edges(data=True):
         edge_type = attrs['edge_type']
         u = id_map[u]
@@ -289,7 +290,10 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
         protein.y = torch.tensor(G.graph['y'], dtype=torch.float32)
         protein.range = torch.tensor(G.graph['range'], dtype=torch.float32)
         protein.chain = torch.tensor(G.graph['chain'], dtype=torch.int64)
+        protein.is_complex = torch.tensor(G.graph['is_complex'], dtype=torch.int64)
         protein.seq_embedding = torch.tensor(G.graph['seq_embedding'], dtype=torch.float32)
+        #protein.pdb = G.graph['pdb']
+        #protein.sequence = G.graph['sequence']
     
     with protein.edge():
         protein.edge_feature = edge_feature
@@ -297,19 +301,23 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     return protein
 
 class pepGraph(Dataset):
-    def __init__(self, keys, root_dir, nfeature, max_len=30, min_distance = 5.0 , max_distance = 10.0, truncation_window_size = None):
+    def __init__(self, keys, root_dir, cluster_index, nfeature, max_len=30, min_distance = 5.0 , max_distance = 10.0, truncation_window_size = None):
         self.keys = keys
         self.root_dir = root_dir
+        self.cluster_index = cluster_index
+
         self.embedding_dir = os.path.join(root_dir, 'embedding_files')
         self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', 'cluster0')
+        self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f'cluster{self.cluster_index}_hop0')
 
         self.max_len = max_len
         self.nfeature = nfeature
         self.min_distance = min_distance
         self.max_distance = max_distance
         self.truncation_window_size = truncation_window_size
+
+        self.complex_state = {'single':0, 'protein complex':1, 'ligand complex':2, 'dna complex':3, 'rna complex': 4}
 
     def __len__(self):
         return len(self.keys)
@@ -332,6 +340,7 @@ class pepGraph(Dataset):
         chain_identifier = self.keys[5][index]
         correction = self.keys[6][index]
         protein_chains = self.keys[7][index].split(',')
+        complex_state = self.keys[8][index]
 
         print("processing",database_id, apo_identifier)
         #if os.path.isfile(os.path.join(self.save_dir, f'{apo_identifier}.pt')):
@@ -355,7 +364,6 @@ class pepGraph(Dataset):
         # residue graph generation #
         G = ResGraph(pdb_fpath, embedding_fpath, protein_chain=protein_chains) # generate residue graph
         G = add_edges(G, max_distance=self.max_distance, min_distance=self.min_distance)
-        print(G)
 
         if self.truncation_window_size is None:
             HDX_df = pd.read_excel(target_HDX_fpath, sheet_name='Sheet1')
@@ -372,7 +380,7 @@ class pepGraph(Dataset):
             HDX_df = HDX_df.reset_index(drop=True)
             print('after filtering:', HDX_df.shape)
             
-            if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction, protein_chains): # read HDX table file
+            if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction, protein_chains, self.cluster_index): # read HDX table file
                 return None
             print('read in pep numbers:', len(pep._registry))
         else: # instead of reading from HDX source file, move a truncation window along sequence
@@ -404,11 +412,12 @@ class pepGraph(Dataset):
         def find_neigbhors(G, nodes, hop=1):
             neigbhor_node = []
             for node in nodes:
-                neigbhors = list(G.neighbors(node))
-                neigbhor_node.extend(neigbhors)
+                for key, neighbor, edge_data in G.edges(node, data=True):
+                    if edge_data['edge_type'] == 'radius_edge':
+                        neigbhor_node.append(neighbor)
             if hop > 1:
                 neigbhor_node = find_neigbhors(neigbhor_node, hop-1)
-            return neigbhor_node
+            return set(neigbhor_node)
         
         i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
         graph_ensemble = []
@@ -417,16 +426,15 @@ class pepGraph(Dataset):
             node_ids = [i2res_id[(chain, res_id)] for res_id in peptide.clusters if (chain, res_id) in i2res_id]
             if len(node_ids) == 0:
                 continue
-
-            #logt_vec = torch.full((len(node_ids), 1), peptide.log_t, dtype=torch.float32)
+            
             seqlen_vec = torch.full((len(node_ids), 1), len(node_ids)/self.max_len, dtype=torch.float32)
             seq_embedding = [G.nodes[node]['x'] for node in node_ids]
             seq_embedding = torch.stack(seq_embedding, dim=0)
             seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], seqlen_vec), dim=1)
             pad_needed = self.max_len - len(node_ids)
             seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
-
-            #neigbhor_node = find_neigbhors(G, node_ids, hop=1)
+            
+            #neigbhor_node = find_neigbhors(G, node_ids, hop=1) #find radius edge neighbors
             #node_ids.extend(neigbhor_node)
             node_ids = set(node_ids)
 
@@ -434,7 +442,11 @@ class pepGraph(Dataset):
             subG.graph['y'] = peptide.hdx_value
             subG.graph['range'] = (peptide.start, peptide.end)
             subG.graph['chain'] = peptide.chain
+            subG.graph['is_complex'] = self.complex_state[complex_state]     
+
             subG.graph['seq_embedding'] = seq_embedding
+            #subG.graph['sequence'] = peptide.sequence
+            #subG.graph['pdb'] = apo_identifier
 
             data = networkx_to_tgG(subG)
             graph_ensemble.append(data)
