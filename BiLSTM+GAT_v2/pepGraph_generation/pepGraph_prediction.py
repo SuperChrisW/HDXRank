@@ -15,7 +15,7 @@ import pandas as pd
 import numpy as np
 import itertools
 from GearNet import GearNet
-from pepGraph_model import MixBiLSTM_GearNet
+from pepGraph_model import MixBiLSTM_GearNet, GCN
 
 from scipy.stats import pearsonr, spearmanr
 import matplotlib.pyplot as plt
@@ -149,11 +149,11 @@ def main(save_args):
     HDX_summary_file = f'{root_dir}/hdock.xlsx'
     hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['structure_file'])
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', "cluster1_hop1")
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f"{save_args['cluster']}")
 
     model_path = save_args['model_path']
 
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     ##################################### config setting #####################################
     config = {
     #training setting
@@ -175,9 +175,10 @@ def main(save_args):
     'topo_in_dim': 42,
     'num_heads': 8,
     'GNN_hidden_dim': 32,
-    'GNN_out_dim': 16,
-    'LSTM_out_dim': 16,
+    'GNN_out_dim': 64,
+    'LSTM_out_dim': 64,
     'final_hidden_dim': 16,
+    'hidden_dims': [512, 512, 512],
     'drop_out': 0.5,
     'graph_hop': 'hop1'
     }
@@ -185,8 +186,8 @@ def main(save_args):
 
     ##################################### model setting #####################################
     #GearNet
-    model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
-                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
+    #model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
+    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
     
     #GearNet-Edge
     #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
@@ -195,6 +196,8 @@ def main(save_args):
 
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(merged_config).to(device)
+
+    model = GCN(merged_config).to(device)
     
     model_state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(model_state_dict)
@@ -222,6 +225,7 @@ def main(save_args):
         y_true_list.extend(y_true)
         y_pred_list.extend(y_pred)
 
+        '''
         pearsonr_ = pearsonr(y_true, y_pred)
         spearmanr_ = spearmanr(y_true, y_pred)
         rmse = sqrt(mean_squared_error(y_true, y_pred))
@@ -229,7 +233,7 @@ def main(save_args):
         print('Pearson:', pearsonr_)
         print('Spearman:', spearmanr_)
         print('RMSE:', rmse)
-        print('MAE:', mae)
+        print('MAE:', mae)'''
 
     range_list = np.array(range_list).reshape(-1, 2)
     chain_list = np.array(chain_list)
@@ -254,8 +258,9 @@ if __name__ == "__main__":
     #protein_name  = 'Hdock_DeltaRBD+V16noext'
     #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
 
-    data_list = os.listdir('/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_GearNetEdge/cluster2_hop1')
-    protein_list = [data.split('.')[0] for data in data_list[:120]]
+    cluster = 'cluster2_hop1'
+    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_GearNetEdge/{cluster}')
+    protein_list = [data.split('.')[0] for data in data_list]
 
     print(len(protein_list))
 
@@ -266,16 +271,20 @@ if __name__ == "__main__":
         'model_name': 'GearNetEdge',
         'version': 'v1',
         'result_dir': f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/prediction',
-        'prediction_csv': f'HDX_pred_cluster2.csv',
+        'prediction_csv': f'',
+        'cluster':cluster,
 
         #prediction setting
         'prediction_protein': protein_list,
-        'model_path': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GN_epoch60_cluster2_hop1+test.pth',
+        'model_path': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GN_epoch60_cluster2_hop1',
         #plot setting
         'slide_window': 1,
         'show_truth': True,
         'show_pred': True,
         }
     
-    main(save_args)
+    for i in range(5):
+        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GCN_epoch60_{cluster}_v{i}.pth'
+        save_args['prediction_csv'] = f'HDX_pred_GCN_{cluster}_v{i}.csv'
+        main(save_args)
     

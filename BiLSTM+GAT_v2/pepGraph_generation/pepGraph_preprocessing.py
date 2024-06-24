@@ -8,15 +8,15 @@ from torch_geometric.data import Dataset, Data
 import torch
 from tqdm import tqdm
 
-cluster_index = 2
+cluster_index = 1
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_test'
-    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge/cluster{cluster_index}_hop0'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
+    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge/cluster{cluster_index}'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet2')
+    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='Sheet1')
     df = df.dropna(subset=['structure_file'])
     apo_identifier = df['structure_file'].astype(str).unique()
 

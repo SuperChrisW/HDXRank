@@ -157,9 +157,14 @@ def main(training_args):
     #BiLSTM
     #model = BiLSTM(training_args).to(device)
 
+    #GCN
+    #model = GCN(training_args).to(device)
+
     ### training ###
     for i in range(config['cross_validation_num']):
-        model = GCN(training_args).to(device)
+        model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
+                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
+                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
         
         loss_fn = nn.BCELoss()    
         optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
@@ -195,15 +200,15 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster2'
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    cluster = 'cluster1'
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':60,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
             'dropout': 0.3,
-            'GNN_type': f'model_GCN_epoch60_{cluster}_hop1',
+            'GNN_type': f'model_GNE_epoch60_{cluster}_hop1',
             'num_GNN_layers': 3,
             'cross_validation_num': 5,
             'num_workers': 4,
@@ -220,7 +225,7 @@ if __name__ == "__main__":
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge',
-            'file_name': f'model_GCN_epoch60_{cluster}_hop1',
+            'file_name': f'model_GNE_epoch60_{cluster}_hop1',
             'data_log': True,
             'device': device,
             'cluster': cluster

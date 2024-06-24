@@ -168,7 +168,7 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster2'
+    cluster = 'cluster1'
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':60,
