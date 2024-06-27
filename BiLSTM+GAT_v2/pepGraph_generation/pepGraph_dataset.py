@@ -306,8 +306,10 @@ class pepGraph(Dataset):
         self.root_dir = root_dir
         self.cluster_index = cluster_index
 
-        self.embedding_dir = os.path.join(root_dir, 'embedding_files')
-        self.pdb_dir = os.path.join(root_dir, 'structure')
+        hdock_protein = '6THL'
+
+        self.embedding_dir = os.path.join(root_dir, 'embedding_files', hdock_protein)
+        self.pdb_dir = os.path.join(root_dir, 'structure', hdock_protein)
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
         self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f'cluster{self.cluster_index}')
 

@@ -159,7 +159,7 @@ if __name__ == "__main__":
     for id, row in df.iterrows():
         pdb_fname = str(row['structure_file']).upper().split('.')[0]
         hhm_fname = str(row['note'])
-        if hhm_fname == '6SB0':
+        if hhm_fname == '6N1Z':
             continue
 
         protein_chain = row['protein_chain'].split(',')

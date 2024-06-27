@@ -149,7 +149,7 @@ def main(save_args):
     HDX_summary_file = f'{root_dir}/hdock.xlsx'
     hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['structure_file'])
-    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f"{save_args['cluster']}")
+    pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f"{save_args['protein_name']}", f"{save_args['cluster']}")
 
     model_path = save_args['model_path']
 
@@ -186,8 +186,8 @@ def main(save_args):
 
     ##################################### model setting #####################################
     #GearNet
-    #model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
-    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
+    model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
+                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
     
     #GearNet-Edge
     #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
@@ -197,7 +197,7 @@ def main(save_args):
     #MixBiLSTM_GearNet
     #model = MixBiLSTM_GearNet(merged_config).to(device)
 
-    model = GCN(merged_config).to(device)
+    #model = GCN(merged_config).to(device)
     
     model_state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(model_state_dict)
@@ -258,8 +258,9 @@ if __name__ == "__main__":
     #protein_name  = 'Hdock_DeltaRBD+V16noext'
     #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
 
-    cluster = 'cluster2_hop1'
-    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_GearNetEdge/{cluster}')
+    cluster = 'cluster2'
+    protein_name = '6N1Z'
+    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_GearNetEdge/{protein_name}/{cluster}')
     protein_list = [data.split('.')[0] for data in data_list]
 
     print(len(protein_list))
@@ -273,6 +274,7 @@ if __name__ == "__main__":
         'result_dir': f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/prediction',
         'prediction_csv': f'',
         'cluster':cluster,
+        'protein_name': protein_name,
 
         #prediction setting
         'prediction_protein': protein_list,
@@ -284,7 +286,7 @@ if __name__ == "__main__":
         }
     
     for i in range(5):
-        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GCN_epoch60_{cluster}_v{i}.pth'
-        save_args['prediction_csv'] = f'HDX_pred_GCN_{cluster}_v{i}.csv'
+        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GN_epoch60_{cluster}_hop1_v{i}.pth'
+        save_args['prediction_csv'] = f'HDX_pred_GN_{protein_name}_{cluster}_v{i}.csv'
         main(save_args)
     
