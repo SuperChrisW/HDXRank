@@ -8,12 +8,12 @@ from torch_geometric.data import Dataset, Data
 import torch
 from tqdm import tqdm
 
-cluster_index = 1
-protein_model = '6THL'
+cluster_index = 2
+protein_model = '1UGH'
 
 if __name__ == '__main__':
     root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_test/hdock'
-    save_dir = f'{root_dir}/graph_ensemble_GearNetEdge/{protein_model}/cluster{cluster_index}'
+    save_dir = f'{root_dir}/graph_ensemble_GVP/{protein_model}/cluster{cluster_index}'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
@@ -58,7 +58,7 @@ if __name__ == '__main__':
 
             temp_model_collection = pd.DataFrame()
             for temp_model in model_list:
-                temp_df['structure_file'] = temp_model
+                temp_df.loc[:, 'structure_file'] = temp_model
 
                 temp_protein = temp_df['protein'].astype(str).to_list()
                 temp_state = temp_df['state'].astype(str).to_list()
@@ -82,8 +82,8 @@ if __name__ == '__main__':
     keys = [database_id, protein, state, match_uni, structure_list, chain_identifier, correction, protein_chains, complex_state]
     print('total number of keys:', len(database_id))
 
-    graph_dataset = pepGraph(keys, root_dir, cluster_index, nfeature = 56, min_distance = 5.0, max_distance = 10.0,
-                             truncation_window_size = None) # distance cutoff: distance between CA atoms, consider 10 or 15
+    graph_dataset = pepGraph(keys, root_dir, cluster_index, nfeature = 56, min_distance = 5.0, max_distance = 10.0, protein_name = protein_model,
+                             truncation_window_size = None, graph_type='GVP') # distance cutoff: distance between CA atoms, consider 10 or 15
     
     count = 0
     progress = tqdm(enumerate(graph_dataset), total=len(graph_dataset))

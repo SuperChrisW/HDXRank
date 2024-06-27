@@ -286,7 +286,7 @@ if __name__ == "__main__":
         }
     
     for i in range(5):
-        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GN_epoch60_{cluster}_hop1_v{i}.pth'
-        save_args['prediction_csv'] = f'HDX_pred_GN_{protein_name}_{cluster}_v{i}.csv'
+        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_{cluster}_hop1_v{i}.pth'
+        save_args['prediction_csv'] = f'HDX_pred_GVP_{protein_name}_{cluster}_v{i}.csv'
         main(save_args)
     
