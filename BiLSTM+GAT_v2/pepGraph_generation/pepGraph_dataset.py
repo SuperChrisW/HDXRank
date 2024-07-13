@@ -198,10 +198,14 @@ def GVP_ResGraph(pdb_file, embedding_file, protein_chain = ['A']): # create netw
 
     return G
 
-def add_edges(G, max_distance=10, min_distance=5):
-    node_coord = [G.nodes[i]['residue_coord'] for i in G.nodes]
-    node_coord = torch.tensor(node_coord, dtype = torch.float32)
+def add_edges(G, coord = None, max_distance=10, min_distance=5):
     batch = torch.tensor([0] * len(G.nodes))
+
+    if coord is not None:
+        node_coord = torch.as_tensor(coord, dtype=torch.float32)
+    else:
+        node_coord = np.array([G.nodes[i]['residue_coord'] for i in G.nodes])
+        node_coord = torch.tensor(node_coord, dtype = torch.float32)
 
     # add radius edges
     edge_index = radius_graph(node_coord, r=max_distance, batch=batch, loop=False)
@@ -209,7 +213,7 @@ def add_edges(G, max_distance=10, min_distance=5):
     for u, v in edge_list:
         if u < v:
             G.add_edge(u, v, edge_type='radius_edge')
-    #print('add radius edges:', G.number_of_edges())
+    print('add radius edges:', G.number_of_edges())
 
     # add knn edges
     edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
@@ -217,19 +221,19 @@ def add_edges(G, max_distance=10, min_distance=5):
     for u, v in edge_list:
         if u < v:
             G.add_edge(u, v, edge_type='knn_edge')
-    #print('add knn edges:', G.number_of_edges())
+    print('add knn edges:', G.number_of_edges())
 
     # remove edges with distance smaller than min_distance
     edges_to_remove = []
     for u, v in G.edges():
-        u_coord = torch.tensor(G.nodes[u]['residue_coord'], dtype = torch.float32)
-        v_coord = torch.tensor(G.nodes[v]['residue_coord'], dtype = torch.float32)
+        u_coord = node_coord[u]
+        v_coord = node_coord[v]
         distance = torch.norm(u_coord - v_coord, dim=0)
         if distance < min_distance:
             if (u,v) not in edges_to_remove:
                 edges_to_remove.append((u, v))
     G.remove_edges_from(edges_to_remove)
-    #print('after removing edges:', G.number_of_edges())
+    print('after removing edges:', G.number_of_edges())
 
     # add sequential edges
     i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
@@ -245,42 +249,48 @@ def add_edges(G, max_distance=10, min_distance=5):
         if (chain,res_id-2) in i2res_id.keys():
             G.add_edge(node, node-2, edge_type='backward_2_edge')  
         G.add_edge(node, node, edge_type='self_edge')
-    #print('add sequential edges:', G.number_of_edges())
+    print('add sequential edges:', G.number_of_edges())
 
     return G
 
 def networkx_to_HeteroG(subG): # convert to pytorch geometric HeteroData
     data = HeteroData()
 
-    for node, node_attr in subG.nodes(data=True):
+    id_map = {}
+    for i, (node, node_attr) in enumerate(subG.nodes(data=True)):
         # Assuming node feature vector 'x' is already a tensor or can be converted as such
-        data['residue'].x = torch.cat([data['residue'].x, node_attr['x'].unsqueeze(0)], dim=0) if 'x' in data['residue'] else node_attr['x'].unsqueeze(0)
+        #data['residue'].x = torch.cat([data['residue'].x, node_attr['x'].unsqueeze(0)], dim=0) if 'x' in data['residue'] else node_attr['x'].unsqueeze(0)
+        if node not in id_map.keys():
+            id_map[node] = i
 
     edge_index_dict = {}
     for u, v, edge_attr in subG.edges(data=True):
         edge_type = edge_attr['edge_type']
         edge_label = ('residue', edge_type, 'residue')
-        edge_index = [[u,v]]
+        edge_index = [id_map[u], id_map[v]]
         if edge_label not in edge_index_dict.keys():
             edge_index_dict[edge_label] = edge_index
-        edge_index_dict[edge_label].extend(edge_index)
+        else:
+            edge_index_dict[edge_label].extend(edge_index)
     for edge_label, edge_index in edge_index_dict.items():
-        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_index = torch.as_tensor(edge_index, dtype=torch.long).t().contiguous()
         data[edge_label].edge_index = edge_index
 
     if 'y' in subG.graph:
-        data['residue'].y = torch.tensor([subG.graph['y']], dtype=torch.float32)
+        data['residue'].y = torch.as_tensor([subG.graph['y']], dtype=torch.float32)
     if 'range' in subG.graph:
-        data['residue'].range = torch.tensor([subG.graph['range']], dtype=torch.float32)
+        data['residue'].range = torch.as_tensor([subG.graph['range']], dtype=torch.float32)
     if 'chain' in subG.graph:
-        data['residue'].chain = torch.tensor([subG.graph['chain']], dtype=torch.int64)
+        data['residue'].chain = torch.as_tensor([subG.graph['chain']], dtype=torch.int64)
     if 'seq_embedding' in subG.graph:
-        data['residue'].seq_embedding = torch.tensor(subG.graph['seq_embedding'], dtype=torch.float32)
+        data['residue'].seq_embedding = torch.as_tensor(subG.graph['seq_embedding'], dtype=torch.float32)
+    if 'is_complex' in subG.graph:
+        data['residue'].is_complex = torch.as_tensor([subG.graph['is_complex']], dtype=torch.int64)
 
     return data
 
 def networkx_to_tgG(G): # convert to torchdrug protein graph
-    node_position = torch.as_tensor([G.nodes[node]['residue_coord'] for node in G.nodes()], dtype=torch.float32)
+    node_position = torch.as_tensor(np.array([G.nodes[node]['residue_coord'] for node in G.nodes()]), dtype=torch.float32)
     num_atom = G.number_of_nodes()
     atom_type = ['CA'] * num_atom # CA - 1
     atom_type = torch.as_tensor([data.Protein.atom_name2id.get(atom, -1) for atom in atom_type])
@@ -301,8 +311,9 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
 
     edge_list = []
     bond_type = []
-    edge_type_list = ['knn_edge', 'radius_edge', 'self_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge'] # knn_edge radius_edge
-    # 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge', 'self_edge'
+    edge_type_list = ['knn_edge', 'radius_edge', 'self_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge'] #radius_edge
+    #'self_edge', 'forward_1_edge', 'forward_2_edge', 'backward_1_edge', 'backward_2_edge'
+
     for u, v, attrs in G.edges(data=True):
         edge_type = attrs['edge_type']
         u = id_map[u]
@@ -314,6 +325,7 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     edge_list = torch.tensor(edge_list, dtype=torch.long)
     bond_type = torch.tensor(bond_type, dtype=torch.long).unsqueeze(-1)
 
+
     protein = data.Protein(edge_list, atom_type, bond_type, view='residue', residue_number=residue_id,
                            node_position=node_position, atom2residue=atom2residue,residue_feature=residue_feature, 
                            residue_type=residue_type, num_relation = len(edge_type_list))
@@ -322,11 +334,11 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     edge_feature = Constructor.edge_gearnet(protein, protein.edge_list, len(edge_type_list))
 
     with protein.graph():
-        protein.y = torch.tensor(G.graph['y'], dtype=torch.float32)
-        protein.range = torch.tensor(G.graph['range'], dtype=torch.float32)
-        protein.chain = torch.tensor(G.graph['chain'], dtype=torch.int64)
-        protein.is_complex = torch.tensor(G.graph['is_complex'], dtype=torch.int64)
-        protein.seq_embedding = torch.tensor(G.graph['seq_embedding'], dtype=torch.float32)
+        protein.y = torch.as_tensor(G.graph['y'], dtype=torch.float32)
+        protein.range = torch.as_tensor(G.graph['range'], dtype=torch.float32)
+        protein.chain = torch.as_tensor(G.graph['chain'], dtype=torch.int64)
+        protein.is_complex = torch.as_tensor(G.graph['is_complex'], dtype=torch.int64)
+        protein.seq_embedding = torch.as_tensor(G.graph['seq_embedding'], dtype=torch.float32)
         #protein.pdb = G.graph['pdb']
         #protein.sequence = G.graph['sequence']
     
@@ -336,7 +348,7 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     return protein
 
 class modified_GVPdataset(ProteinGraphDataset):
-    def _featurize_as_graph(self, protein, top_k = 10):
+    def _featurize_as_graph(self, protein):
         # from GVP 
         # modify the code to accept networkx graph as input
 
@@ -349,18 +361,20 @@ class modified_GVPdataset(ProteinGraphDataset):
             coords[~mask] = np.inf
             
             X_ca = coords[:, 1]
-            edge_index = torch_cluster.knn_graph(X_ca, k=top_k)
-            edge_list = edge_index.t().tolist()
+            edges = list(protein.edges())
+            edge_index = torch.tensor(edges, dtype=torch.long, device=self.device)
+            edge_index = edge_index.t().contiguous()
 
             pos_embeddings = self._positional_embeddings(edge_index)
             E_vectors = X_ca[edge_index[0]] - X_ca[edge_index[1]]
             rbf = _rbf(E_vectors.norm(dim=-1), D_count=self.num_rbf, device=self.device)
             
-            dihedrals = self._dihedrals(coords)                     
+            #dihedrals = self._dihedrals(coords)                     
             orientations = self._orientations(X_ca)
+            sidechains = self._sidechains(coords)
             
             node_s = x
-            node_v = torch.cat([orientations], dim=-2)
+            node_v = torch.cat([orientations, sidechains.unsqueeze(-2)], dim=-2)
             edge_s = torch.cat([rbf, pos_embeddings], dim=-1)
             edge_v = _normalize(E_vectors).unsqueeze(-2)
             
@@ -371,9 +385,9 @@ class modified_GVPdataset(ProteinGraphDataset):
                 protein.nodes[node]['node_s'] = node_s[idx]
                 protein.nodes[node]['node_v'] = node_v[idx]
 
-            for u, v in edge_list:
-                protein.add_edge(u, v, edge_type='knn_edge', edge_s=edge_s[idx], edge_v=edge_v[idx])
-            print('add knn edges:', protein.number_of_edges())
+            for idx, (u, v, k) in enumerate(protein.edges(keys=True)):
+                protein.edges[(u,v,k)]['edge_s'] = edge_s[idx]
+                protein.edges[(u,v,k)]['edge_v'] = edge_v[idx]
 
         return protein
 
@@ -387,8 +401,8 @@ class pepGraph(Dataset):
         hdock_protein = protein_name
         self.graph_type = graph_type
 
-        self.embedding_dir = os.path.join(root_dir, 'embedding_files', hdock_protein)
-        self.pdb_dir = os.path.join(root_dir, 'structure', hdock_protein)
+        self.embedding_dir = os.path.join(root_dir, 'embedding_files')
+        self.pdb_dir = os.path.join(root_dir, 'structure')
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
         self.save_dir = os.path.join(root_dir, 'graph_ensemble_GearNetEdge', f'cluster{self.cluster_index}')
 
@@ -510,16 +524,15 @@ class pepGraph(Dataset):
         
         i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
         graph_ensemble = []
+
         for peptide in pep._registry:
             chain = peptide.chain
             node_ids = [i2res_id[(chain, res_id)] for res_id in peptide.clusters if (chain, res_id) in i2res_id]
             if len(node_ids) == 0:
                 continue
             
-            seqlen_vec = torch.full((len(node_ids), 1), len(node_ids)/self.max_len, dtype=torch.float32)
             seq_embedding = [G.nodes[node]['x'] for node in node_ids]
             seq_embedding = torch.stack(seq_embedding, dim=0)
-            seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], seqlen_vec), dim=1)
             pad_needed = self.max_len - len(node_ids)
             seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
             
@@ -582,7 +595,15 @@ class pepGraph(Dataset):
             return None
 
         # residue graph generation #
+        print('creating whole protein graph')
         G = GVP_ResGraph(pdb_fpath, embedding_fpath, protein_chain=protein_chains) # load protein and record backbone coordinations
+
+        residue_coord = np.array([G.nodes[node]['residue_coord'] for node in G.nodes()])
+        coords = torch.as_tensor(residue_coord, dtype=torch.float32)
+        coords = coords[:,1,:]
+        print(coords.shape)
+        G = add_edges(G, coord=coords, max_distance=self.max_distance, min_distance=self.min_distance)
+
         graph_constructor = modified_GVPdataset([], top_k=10)
         G = graph_constructor._featurize_as_graph(G)
 
@@ -615,16 +636,15 @@ class pepGraph(Dataset):
         
         i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
         graph_ensemble = []
+        print('spliting peptide graph')
         for peptide in pep._registry:           
             chain = peptide.chain
             node_ids = [i2res_id[(chain, res_id)] for res_id in peptide.clusters if (chain, res_id) in i2res_id]
             if len(node_ids) == 0:
                 continue
 
-            seqlen_vec = torch.full((len(node_ids), 1), len(node_ids)/self.max_len, dtype=torch.float32)
             seq_embedding = [G.nodes[node]['x'] for node in node_ids]
             seq_embedding = torch.stack(seq_embedding, dim=0)
-            seq_embedding = torch.cat((seq_embedding[:, :self.nfeature], seqlen_vec), dim=1)
             pad_needed = self.max_len - len(node_ids)
             seq_embedding = F.pad(seq_embedding, (0, 0, 0, pad_needed), 'constant', 0)
 
@@ -636,29 +656,26 @@ class pepGraph(Dataset):
 
             residue_coord = np.array([subG.nodes[node]['residue_coord'] for node in subG.nodes()])
             coords = torch.as_tensor(residue_coord, dtype=torch.float32)
-            X_ca = coords[:, 1]
             node_s = torch.stack([subG.nodes[node]['node_s'] for node in subG.nodes()], dim=0)
             node_v = torch.stack([subG.nodes[node]['node_v'] for node in subG.nodes()], dim=0)
             edge_s = torch.stack([subG.edges[(u,v,k)]['edge_s'] for u,v,k in subG.edges(keys=True)], dim=0)
             edge_v = torch.stack([subG.edges[(u,v,k)]['edge_v'] for u,v,k in subG.edges(keys=True)], dim=0)
             mask = torch.isfinite(coords.sum(dim=(1,2)))
             
-            id_map = {}
-            for i, node in enumerate(subG.nodes()):
-                if node not in id_map.keys():
-                    id_map[node] = i
-            edge_list = []
-            for u,v in subG.edges():
-                edge_list.append([id_map[u], id_map[v]])
-            edge_index_mapped = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+            Hetero_data = networkx_to_HeteroG(subG)
+            Hetero_data['residue'].node_s = node_s
+            Hetero_data['residue'].node_v = node_v
+            Hetero_data['residue'].edge_s = edge_s
+            Hetero_data['residue'].edge_v = edge_v
+            Hetero_data['residue'].mask = mask
 
-            data = torch_geometric.data.Data(x=X_ca, y = peptide.hdx_value, range = (peptide.start, peptide.end), chain = peptide.chain, 
-                                             seq_embedding = seq_embedding, is_complex = self.complex_state[complex_state],
+            '''data = torch_geometric.data.Data(y = torch.as_tensor(peptide.hdx_value), range = torch.as_tensor([peptide.start, peptide.end]), chain = torch.as_tensor(peptide.chain), 
+                                             seq_embedding = seq_embedding, is_complex = torch.as_tensor(self.complex_state[complex_state]),
                                             node_s=node_s, node_v=node_v,
                                             edge_s=edge_s, edge_v=edge_v,
-                                            edge_index=edge_index_mapped, mask=mask)
-
-            graph_ensemble.append(data)
+                                            edge_index=edge_index_mapped, mask=mask)'''
+            
+            graph_ensemble.append(Hetero_data)
 
         label = f'{apo_identifier}'
         return graph_ensemble, label

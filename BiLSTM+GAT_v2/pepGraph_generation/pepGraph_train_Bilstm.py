@@ -36,7 +36,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
+            new_embedding = torch.cat((graph_batch.seq_embedding[:,:,:35],graph_batch.seq_embedding[:,:,39:40]), dim=-1)
+            outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
+            #outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
 
             train_loss = loss_fn(outputs, targets)
             optimizer.zero_grad()
@@ -67,23 +69,6 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             experiment.log_metric('train_pcc', epoch_rp_train, step = epoch)
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
 
-        ### validation and early-stopping
-        if epoch % 2 == 0:
-            model.eval()
-            epoch_val_losses = []
-            with torch.no_grad():
-                for graph_batch in val_loader:
-                    graph_batch = graph_batch.to(device)
-                    targets = graph_batch.y
-                    outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
-
-                    val_loss = loss_fn(outputs, targets)
-                    epoch_val_losses.append(val_loss.item())
-                val_losses_mean = np.mean(epoch_val_losses)
-
-            if data_log:
-                experiment.log_metric('val_loss', val_losses_mean, step = epoch)
-
     torch.save(model.state_dict(), f'{result_fpath}.pth')
     return rmse_train_list, rp_train
 
@@ -112,6 +97,8 @@ def main(training_args):
         pepGraph_file = f'{pepGraph_dir}/{pdb}.pt'
         if os.path.isfile(pepGraph_file):
             pepGraph_ensemble = torch.load(pepGraph_file)
+            if pepGraph_ensemble[0].seq_embedding.shape[1] != 98:
+                continue
             if row['complex_state'] == 'single':
                 apo_input.extend(pepGraph_ensemble)
             else:
@@ -129,6 +116,8 @@ def main(training_args):
     #model = MixBiLSTM_GearNet(training_args).to(device)
 
     #BiLSTM
+    training_args['feat_in_dim'] = 36
+    training_args['topo_in_dim'] = 0
     model = BiLSTM(training_args).to(device)
 
     ### training ###
@@ -168,8 +157,8 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster1'
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    cluster = 'cluster2'
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':60,
             'batch_size': 16,
@@ -192,7 +181,7 @@ if __name__ == "__main__":
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge',
-            'file_name': f'model_Bilstm_epoch60_{cluster}',
+            'file_name': f'model_Bilstm36_epoch60_{cluster}',
             'data_log': True,
             'device': device,
             'cluster': cluster
@@ -205,7 +194,6 @@ if __name__ == "__main__":
         project_name="CoolHdx_project",
         workspace="superchrisw"
     )
-   
     if training_args['data_log']:
         experiment.log_parameters(config)
 

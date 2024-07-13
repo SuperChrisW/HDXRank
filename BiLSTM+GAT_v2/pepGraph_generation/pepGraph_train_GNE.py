@@ -21,11 +21,12 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 
+import argparse
 
-def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log):
+
+def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log, rm_feat = 'none'):
     rp_train = []
     rmse_train_list = []
-    best_val_loss = float('inf')
 
     for epoch in range(num_epochs):
         list1_train = []
@@ -36,12 +37,20 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         for graph_batch in train_loader:
             graph_batch = graph_batch.to(device)
             targets = graph_batch.y
-            #node_feat = graph_batch.residue_feature[:,30:].float() # remove msa feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:30].float(), graph_batch.residue_feature[:,40:].float()], dim=1) # remove seq feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:40].float(), graph_batch.residue_feature[:,44:].float()], dim=1) # remove physical feat
-            #node_feat = torch.cat([graph_batch.residue_feature[:,:44].float(), graph_batch.residue_feature[:,56:].float()], dim=1) # remove geometric feat
-            #node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom feat
-            node_feat = graph_batch.residue_feature.float()
+            if rm_feat == 'msa':
+                node_feat = graph_batch.residue_feature[:,30:].float()
+            elif rm_feat == 'sequence':
+                node_feat = torch.cat([graph_batch.residue_feature[:,:30].float(), graph_batch.residue_feature[:,40:].float()], dim=1) # remove seq feat
+            elif rm_feat == 'physical':
+                node_feat = torch.cat([graph_batch.residue_feature[:,:40].float(), graph_batch.residue_feature[:,44:].float()], dim=1) # remove physical feat
+            elif rm_feat == 'geometric':
+                node_feat = torch.cat([graph_batch.residue_feature[:,:44].float(), graph_batch.residue_feature[:,56:].float()], dim=1) # remove geometric feat
+            elif rm_feat == 'heteroatom':
+                node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom feat
+            elif rm_feat == 'none':
+                node_feat = graph_batch.residue_feature.float()
+            else:
+                raise ValueError('Invalid feature type to remove')
             outputs = model(graph_batch, node_feat) # for GearNet and GearNet-Edge
             #outputs = model(graph_batch) # for MixBiLSTM_GearNet
             #outputs = model(graph_batch.seq_embedding.unsqueeze(1)) # for BiLSTM
@@ -76,7 +85,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
 
         ### validation and early-stopping
-        if epoch % 2 == 0:
+        '''if epoch % 2 == 0:
             model.eval()
             epoch_val_losses = []
             with torch.no_grad():
@@ -99,7 +108,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 val_losses_mean = np.mean(epoch_val_losses)
 
             if data_log:
-                experiment.log_metric('val_loss_hop1', val_losses_mean, step = epoch)
+                experiment.log_metric('val_loss_hop1', val_losses_mean, step = epoch)'''
 
     torch.save(model.state_dict(), f'{result_fpath}.pth')
     return rmse_train_list, rp_train
@@ -140,13 +149,13 @@ def main(training_args):
 
     ### model initialization ###
     torch.cuda.empty_cache()
+    edge_relation = {'KNNEdge':1, 'radiusEdge':1, 'seqEdge':4, 'none': 0}
 
     #GearNet
     #model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
     #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
     
     #GearNet-Edge
-    #edge_relation = {'KNN':1, 'radius':1, 'seq':4, 'none': 0}
     #model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
     #                          num_relation=7-edge_relation["none"], edge_input_dim=59-edge_relation["none"], num_angle_bin=8,
     #                          batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
@@ -162,9 +171,8 @@ def main(training_args):
 
     ### training ###
     for i in range(config['cross_validation_num']):
-        model = GearNet(input_dim=training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims=[512, 512, 512], 
-                              num_relation=7, edge_input_dim=59, num_angle_bin=8,
-                              batch_norm=True, concat_hidden=True, short_cut=True, readout="sum", activation = 'relu').to(device)
+        model = GearNet(input_dim = training_args['feat_in_dim']+training_args['topo_in_dim'], hidden_dims = [512,512,512],
+                            num_relation=7-edge_relation[training_args['rm_edge']], batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True).to(device)
         
         loss_fn = nn.BCELoss()    
         optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
@@ -191,44 +199,57 @@ def main(training_args):
         print('length of val_Set:', len(val_set))
 
         # train and save model at checkpoints
-        fname = training_args['file_name']+'_v'+str(i)
+        fname = training_args['file_name']+'_v'+str(i+2)
         result_fpath = os.path.join(training_args['result_dir'], fname)
         rmse_train_list, rp_train = train_model(
             model, config['num_epochs'], optimizer, train_loader, val_loader, loss_fn, device,
-            experiment, result_fpath, training_args['data_log'])
+            experiment, result_fpath, training_args['data_log'], training_args['rm_feat'])
         if training_args['data_log']:
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster1'
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    parser = argparse.ArgumentParser(description='Train a HDX-GearNet model.')
+    parser.add_argument('-cluster', type=str, required=True, default='cluster1', help='Data cluster to train the model')
+
+    parser.add_argument('-save', type=str, default='/home/lwang/models/HDX_LSTM/results/240629_GNEablation', help='Path to save the output results')
+    parser.add_argument('-epoch', type=int, default= 60, help='epoch numbers to be trained')
+    parser.add_argument('-cross_num', type=int, default= 1, help='cross validation numbers')
+    parser.add_argument('-cuda', type=int, default= 0, help='cuda number')
+    parser.add_argument('-rm_feat', type=str, default= "none", help='remove feature type from the input features')
+    parser.add_argument('-rm_edge', type=str, default= "none", help='remove edge from the input features')
+    args = parser.parse_args()
+
+    cluster = args.cluster
+    device = torch.device(f'cuda:{args.cuda}' if torch.cuda.is_available() else 'cpu')
     config = {
-            'num_epochs':60,
+            'num_epochs':args.epoch,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
             'dropout': 0.3,
             'GNN_type': f'model_GNE_epoch60_{cluster}_hop1',
             'num_GNN_layers': 3,
-            'cross_validation_num': 5,
+            'cross_validation_num': args.cross_num,
             'num_workers': 4,
     }
 
     feat_num = {"sequence": 10, "msa": 30, "physical": 4, "geometric": 12, "heteroatom": 42, 'none': 0}
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
-            'feat_in_dim': 56 - feat_num["none"], 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'feat_in_dim': 56 - feat_num[args.rm_feat], 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
             'GNN_out_dim': 64, 'LSTM_out_dim': 64, 'hidden_dims': [512, 512, 512],
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
-            'result_dir': '/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge',
-            'file_name': f'model_GNE_epoch60_{cluster}_hop1',
+            'result_dir': args.save,
+            'file_name': f'model_GNE_epoch60_{cluster}_hop1-{args.rm_feat}',
             'data_log': True,
             'device': device,
-            'cluster': cluster
+            'cluster': cluster,
+            'rm_feat': args.rm_feat,
+            'rm_edge': args.rm_edge
     }
 
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
