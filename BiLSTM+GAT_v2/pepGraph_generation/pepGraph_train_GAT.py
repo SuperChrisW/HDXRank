@@ -1,7 +1,6 @@
 ### training ###
 import os
 import sys
-from tqdm import tqdm
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -14,18 +13,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
-from GearNet import GearNet
-from pepGraph_model import MixBiLSTM_GearNet, BiLSTM
+from pepGraph_BiLSTM import GAT
 
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
 
-def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log):
+def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log = True):
     rp_train = []
     rmse_train_list = []
-    best_val_loss = float('inf')
 
     for epoch in range(num_epochs):
         list1_train = []
@@ -35,12 +33,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
         model.train()
         for graph_batch in train_loader:
             optimizer.zero_grad()
-
             graph_batch = graph_batch.to(device)
-            targets = graph_batch['residue'].y
-            #new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
-            #outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
-            outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1)) # for BiLSTM
+            targets = graph_batch['residue'].y.to(torch.float32)
+            outputs = model(graph_batch)
 
             train_loss = loss_fn(outputs, targets)
             train_loss.backward()
@@ -69,7 +64,8 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             experiment.log_metric('train_loss', epoch_train_losses, step = epoch)
             experiment.log_metric('train_pcc', epoch_rp_train, step = epoch)
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
-        
+
+        ### validation and early-stopping
         if epoch % 5 == 0:
             model.eval()
             epoch_val_losses = []
@@ -77,12 +73,8 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch['residue'].y.to(torch.float32)
-
-                    targets = graph_batch['residue'].y
-                    #new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
-                    #outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
-                    outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1))
-                
+                    outputs = model(graph_batch)
+                        
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
                 val_losses_mean = np.mean(epoch_val_losses)
@@ -105,7 +97,7 @@ def save_checkpoint(model, optimizer, epoch, file_path):
     torch.save(checkpoint, file_path)
 
 def main(training_args):
-    ##################################### initial setting ##################################### 
+   ##################################### initial setting ##################################### 
     root_dir = "/home/lwang/models/HDX_LSTM/data/Latest_set"
     summary_HDX_file = f'{root_dir}/merged_data-NAcomplex.xlsx'
     hdx_df = pd.read_excel(summary_HDX_file, sheet_name='Sheet1')
@@ -113,30 +105,16 @@ def main(training_args):
 
     pepGraph_dir = os.path.join(root_dir, 'graph_ensemble_simpleGVP', training_args['cluster'])
     result_dir = training_args['result_dir']
-    result_fpath = os.path.join(training_args['result_dir'], training_args['file_name'])
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
 
     device = training_args['device']
     ### data preparation ###
-    hdx_df = hdx_df.drop_duplicates(subset=['structure_file'])
-
     apo_input = []
     complex_input = []
+    hdx_df = hdx_df.drop_duplicates(subset=['structure_file'])
+
     print('data loading')
-    '''for row_id, row in tqdm(hdx_df.iterrows()):
-        pdb = row['structure_file'].strip().split('.')[0].upper()
-        pepGraph_file = f'{pepGraph_dir}/{pdb}.pt'
-        if os.path.isfile(pepGraph_file):
-            pepGraph_ensemble = torch.load(pepGraph_file)
-            if pepGraph_ensemble[0].seq_embedding.shape[1] != 98:
-                continue
-            if row['complex_state'] == 'single':
-                apo_input.append(pepGraph_ensemble)
-            else:
-                complex_input.append(pepGraph_ensemble)
-        else:
-            continue'''
     apo_input = torch.load(f'{pepGraph_dir}/train_val_apo.pt')
     complex_input = torch.load(f'{pepGraph_dir}/train_val_complex.pt')
     print('length of apo data:', len(apo_input))
@@ -145,27 +123,18 @@ def main(training_args):
     ### model initialization ###
     torch.cuda.empty_cache()
 
-    #MixBiLSTM_GearNet
-    #model = MixBiLSTM_GearNet(training_args).to(device)
-
-    #BiLSTM
-    training_args['feat_in_dim'] = 1280 # 36 or 98 or 1280
-    training_args['topo_in_dim'] = 0
-
     ### training ###
+    loss_fn = nn.BCELoss()
     for i in range(config['cross_validation_num']):
-        model = BiLSTM(training_args).to(device)
-        loss_fn = nn.BCELoss()    
+        model = GAT(training_args).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
 
         print(f'-----------------------------------------')
         print(f'-         cross validation {i}            -')
         print(f'-----------------------------------------')
 
-        #split based on protein rather than peptide graph
         train_apo, val_apo = train_test_split(apo_input, test_size=0.2, random_state=42)
         train_complex, val_complex = train_test_split(complex_input, test_size=0.2, random_state=42)
-
         print('length of train_apo:', len(train_apo))
         print('length of val_apo:', len(val_apo))
         print('length of train_complex:', len(train_complex))
@@ -176,7 +145,6 @@ def main(training_args):
 
         train_loader = DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
-    
         print('length of train_Set:', len(train_set))
         print('length of val_Set:', len(val_set))
 
@@ -190,43 +158,43 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster2_5A_esm'
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    cluster = 'cluster1_5A_esm'
+    model_name = 'GAT1280'
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     config = {
             'num_epochs':120,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
-            'GNN_type': f'model_Bilstm1280_{cluster}',
+            'GNN_type': f'model_{model_name}_{cluster}_radiusEdge+self',
             'num_GNN_layers': 3,
             'cross_validation_num': 1,
             'num_workers': 4,
     }
 
-    feat_num = {"sequence": 10, "msa": 30, "physical": 4, "geometric": 12, "heteroatom": 42, 'none': 0}
-
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
-            'feat_in_dim': 1280 - feat_num["none"], 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
-            'GNN_out_dim': 64, 'LSTM_out_dim': 64,
+            'feat_in_dim': 1280, 'topo_in_dim': 0, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'GNN_out_dim': 16, 'LSTM_out_dim': 16,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
             'result_dir': '/home/lwang/models/HDX_LSTM/results/240725_GVP',
-            'file_name': f'model_Bilstm1280_{cluster}',
+            'file_name': f'model_{model_name}_{cluster}_radiusEdge+self',
             'data_log': True,
             'device': device,
             'cluster': cluster
     }
 
     os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
-    
+
     experiment = Experiment(
         api_key="yvWYrZuk8AhNnXgThBrgGChY4",
         project_name="LuckHdx_project",
         workspace="superchrisw"
     )
+   
     if training_args['data_log']:
         experiment.log_parameters(config)
 

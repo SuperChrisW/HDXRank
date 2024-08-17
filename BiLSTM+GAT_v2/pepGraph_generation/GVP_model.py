@@ -30,27 +30,34 @@ class MQAModel(nn.Module):
     :param drop_rate: rate to use in all dropout layers
     '''
     def __init__(self, node_in_dim, node_h_dim, 
-                 edge_in_dim, edge_h_dim,
-                 seq_in=False, num_layers=3, drop_rate=0.1):
+                 edge_in_dim, edge_h_dim, metadata,
+                num_layers=3, drop_rate=0.1):
         
         super(MQAModel, self).__init__()
         
-        if seq_in:
-            self.W_s = nn.Embedding(20, 20)
-            node_in_dim = (node_in_dim[0] + 20, node_in_dim[1])
-        
-        self.W_v = nn.Sequential(
-            LayerNorm(node_in_dim),
-            GVP(node_in_dim, node_h_dim, activations=(None, None))
+        self.node_type = metadata[0]
+        self.edge_type = metadata[1]
+
+        self.W_v = nn.ModuleDict({
+            node_type: nn.Sequential(
+                LayerNorm(node_in_dim),
+                GVP(node_in_dim, node_h_dim, activations=(None, None))
+            ) for node_type in self.node_type
+        })
+
+        self.W_e = nn.ModuleDict(
+            {edge_type[1]: nn.Sequential(
+                LayerNorm(edge_in_dim),
+                GVP(edge_in_dim, edge_h_dim, activations=(None, None))
+            ) for edge_type in self.edge_type}
         )
-        self.W_e = nn.Sequential(
-            LayerNorm(edge_in_dim),
-            GVP(edge_in_dim, edge_h_dim, activations=(None, None))
+
+        self.layers = nn.ModuleDict(
+            {
+                edge_type[1]: MySequential(*[GVPConvLayer(node_h_dim, edge_h_dim, drop_rate=drop_rate) for _ in range(num_layers)])
+                for edge_type in self.edge_type
+            }
         )
-        
-        self.layers = nn.ModuleList(
-                GVPConvLayer(node_h_dim, edge_h_dim, drop_rate=drop_rate) 
-            for _ in range(num_layers))
         
         ns, _ = node_h_dim
         self.W_out = nn.Sequential(
@@ -63,7 +70,7 @@ class MQAModel(nn.Module):
             nn.Linear(2*ns, 1)
         )
 
-    def forward(self, h_V, edge_index, h_E, seq=None, batch=None):      
+    def forward(self, h_V_dict, edge_index_dict, h_E_dict, batch=None):      
         '''
         :param h_V: tuple (s, V) of node embeddings
         :param edge_index: `torch.Tensor` of shape [2, num_edges]
@@ -71,15 +78,20 @@ class MQAModel(nn.Module):
         :param seq: if not `None`, int `torch.Tensor` of shape [num_nodes]
                     to be embedded and appended to `h_V`
         '''
-        if seq is not None:
-            seq = self.W_s(seq)
-            h_V = (torch.cat([h_V[0], seq], dim=-1), h_V[1])
+        h_V = {'residue': self.W_v['residue']((h_V_dict[0]['residue'], h_V_dict[1]['residue']))}
+        h_E = {edge_type: self.W_e[edge_type[1]]((h_E_dict[0][edge_type], h_E_dict[1][edge_type])) for edge_type in self.edge_type}
+        h_out = None
+        for edge_type in self.edge_type:
+            node = h_V['residue']
+            edge_index = edge_index_dict[edge_type]
+            edge_attr = h_E[edge_type]
+            h_conv = self.layers[edge_type[1]](node, edge_index, edge_attr)
+            if h_out is None:
+                h_out = h_conv
+            else:
+                h_out = tuple_sum(h_out, h_conv)
 
-        h_V = self.W_v(h_V)
-        h_E = self.W_e(h_E)
-        for layer in self.layers:
-            h_V = layer(h_V, edge_index, h_E)
-        out = self.W_out(h_V)
+        out = self.W_out(h_out)
         
         if batch is None: out = out.mean(dim=0, keepdims=True)
         else: out = scatter_mean(out, batch, dim=0)
@@ -208,7 +220,7 @@ class GVPConvLayer(nn.Module):
                            aggr="add" if autoregressive else "mean",
                            activations=activations, vector_gate=vector_gate)
         GVP_ = functools.partial(GVP, 
-                activations=activations, vector_gate=vector_gate)
+                activations=activations, vector_gate=vector_gate) # pre-set the act and vector_gate
         self.norm = nn.ModuleList([LayerNorm(node_dims) for _ in range(2)])
         self.dropout = nn.ModuleList([Dropout(drop_rate) for _ in range(2)])
 
@@ -265,7 +277,6 @@ class GVPConvLayer(nn.Module):
             x, dh = tuple_index(x, node_mask), tuple_index(dh, node_mask)
             
         x = self.norm[0](tuple_sum(x, self.dropout[0](dh)))
-        
         dh = self.ff_func(x)
         x = self.norm[1](tuple_sum(x, self.dropout[1](dh)))
         
@@ -456,3 +467,14 @@ class Dropout(nn.Module):
             return self.sdropout(x)
         s, v = x
         return self.sdropout(s), self.vdropout(v)
+
+class MySequential(nn.Module):
+    """A custom sequential container that handles multiple inputs."""
+    def __init__(self, *args):
+        super(MySequential, self).__init__()
+        self.layers = nn.ModuleList(args)
+
+    def forward(self, x, edge_index, edge_attr):
+        for layer in self.layers:   
+            x = layer(x, edge_index, edge_attr)
+        return x

@@ -34,24 +34,27 @@ def test_model(model, test_loader, device, graph_type = 'GearNetEdge'):
     try:
         for i, graph_batch in enumerate(test_loader):
                 graph_batch = graph_batch.to(device)
-                targets = graph_batch.y
                 if graph_type == 'GearNetEdge':
+                    targets = graph_batch.y
                     outputs = model(graph_batch, graph_batch.residue_feature.float())
                     range_list.extend(graph_batch.range.cpu().detach().numpy())
                     chain_list.extend(graph_batch.chain.cpu().detach().numpy())
                     y_pred.append(outputs.cpu().detach().numpy())
                     y_true.append(targets.cpu().detach().numpy())
                 elif graph_type == 'GVP':
-                    outputs = model((graph_batch.node_s, graph_batch.node_v), graph_batch.edge_index, 
-                                    (graph_batch.edge_s, graph_batch.edge_v), batch = graph_batch.batch)
-                    range_list.extend(graph_batch.range.cpu().tolist())
-                    chain_list.extend(graph_batch.chain.cpu().tolist())
+                    targets = graph_batch['residue'].y
+                    outputs = model((graph_batch['residue'].node_s, graph_batch['residue'].node_v), graph_batch.edge_index_dict, 
+                                    (graph_batch['residue'].edge_s, graph_batch['residue'].edge_v), batch = graph_batch['residue'].batch)
+                    range_list.extend(graph_batch['residue'].range.cpu().tolist())
+                    chain_list.extend(graph_batch['residue'].chain.cpu().tolist())
                     y_pred.append(outputs.cpu().detach().numpy())
                     y_true.append(targets.cpu().detach().numpy())
-                elif graph_type == 'BiLSTM':
-                    outputs = model(graph_batch.seq_embedding)
-                    range_list.extend(graph_batch.range.cpu().detach().numpy())
-                    chain_list.extend(graph_batch.chain.cpu().detach().numpy())
+                elif graph_type == 'Bilstm36': # load GVP data
+                    targets = graph_batch['residue'].y
+                    new_embedding = graph_batch['residue'].seq_embedding[:,:36]
+                    outputs = model(new_embedding)
+                    range_list.extend(graph_batch['residue'].range.cpu().detach().numpy())
+                    chain_list.extend(graph_batch['residue'].chain.cpu().detach().numpy())
                     y_pred.append(outputs.cpu().detach().numpy())
                     y_true.append(targets.cpu().detach().numpy())
                 else:
@@ -131,12 +134,12 @@ def plot_result(y_true, y_pred, range_list, batch_list, chain_list, args):
 def run_prediction(model, hdx_df, merged_config, pepGraph_dir, device):
     ##################################### data preparation #####################################
     test_loader = load_data(hdx_df, pepGraph_dir, merged_config)
-    try:
-        y_true, y_pred, range_list, chain_list = test_model(model, test_loader, device, merged_config['graph_type'])
-        return y_true, y_pred, range_list, chain_list
-    except Exception as e:
-        print(e)
-        return None, None, None, None
+    #try:
+    y_true, y_pred, range_list, chain_list = test_model(model, test_loader, device, merged_config['graph_type'])
+    return y_true, y_pred, range_list, chain_list
+    #except Exception as e:
+    #    print(e)
+    #    return None, None, None, None
 
 def load_model(model_path, config, accelerator):
     model = GearNet(config)
@@ -148,19 +151,17 @@ def load_model(model_path, config, accelerator):
 def load_data(df, pepGraph_dir, merged_config):
     input_data = []
     load_proteins = merged_config['load_proteins'] if isinstance(merged_config['load_proteins'], list) else [merged_config['load_proteins']]
-
     for protein in load_proteins:
         pdb = protein.upper()
         pepGraph_file = os.path.join(pepGraph_dir, f'{pdb}.pt')
         if os.path.isfile(pepGraph_file):
             pepGraph_ensemble = torch.load(pepGraph_file) # list of graphs
             input_data.extend(pepGraph_ensemble)
-
     if merged_config['graph_type'] == 'GearNetEdge':
         test_set = data.Protein.pack(input_data)
         test_set.view = 'residue'
         test_loader = data.DataLoader(test_set, batch_size = merged_config['batch_size'], shuffle=False, num_workers=merged_config['num_workers'])
-    elif merged_config['graph_type'] == 'GVP':
+    elif merged_config['graph_type'] == 'GVP' or merged_config['graph_type'] == 'Bilstm36':
         test_set = input_data
         test_loader = tg_DataLoader(input_data, batch_size=merged_config['batch_size'], shuffle=False, num_workers=merged_config['num_workers'])
     else:
@@ -173,8 +174,8 @@ def main(save_args):
     HDX_summary_file = f'{root_dir}/hdock.xlsx'
     hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['structure_file'])
-    pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_{save_args['graph_type']}", f"{save_args['protein_name']}", f"{save_args['cluster']}")
-
+    #pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_{save_args['graph_type']}", f"{save_args['protein_name']}", f"{save_args['cluster']}")
+    pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_simpleGVP", f"{save_args['protein_name']}", f"{save_args['cluster']}")
     model_path = save_args['model_path']
 
     device = save_args['device']
@@ -194,7 +195,7 @@ def main(save_args):
     #model setting
     'num_hidden_channels': 10,
     'num_out_channels': 20,
-    'feat_in_dim': 56,
+    'feat_in_dim': 56-62, #bilstm 36
     'topo_in_dim': 42,
     'num_heads': 8,
     'GNN_hidden_dim': 32,
@@ -209,8 +210,8 @@ def main(save_args):
 
     ##################################### model setting #####################################
     #GearNet
-    model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
-                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
+    #model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
+    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
     
     #GearNet-Edge
     #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
@@ -224,11 +225,14 @@ def main(save_args):
     #model = GCN(merged_config).to(device)
 
     # GVP-GNN
-    '''node_in_dim = (98,2)
-    node_h_dim = (392, 12)
+    node_in_dim = (1280,3) # 78 or 98 or 1280
+    node_h_dim = (1280, 12) # 392 or 1280
     edge_in_dim = (32,1)
     edge_h_dim = (128, 4)
-    model = MQAModel(node_in_dim, node_h_dim, edge_in_dim, edge_h_dim, seq_in=False, num_layers=3, drop_rate=0.5).to(device)'''
+    metadata = (['residue'], [('residue', 'radius_edge', 'residue')])
+    model = MQAModel(node_in_dim, node_h_dim, 
+        edge_in_dim, edge_h_dim, metadata,
+        num_layers=3, drop_rate=0.5)
     
     model_state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(model_state_dict)
@@ -289,12 +293,12 @@ if __name__ == "__main__":
     #protein_name  = 'Hdock_DeltaRBD+V16noext'
     #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
 
-    cluster = 'cluster2'
-    protein_name = '6THL'
-    graph_type = 'GearNetEdge'
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    cluster = 'cluster1_5A_esm'
+    protein_name = '8F7A_epi'
+    graph_type = 'GVP'
+    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 
-    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_{graph_type}/{protein_name}/{cluster}')
+    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_simpleGVP/{protein_name}/{cluster}')
     protein_list = [data.split('.')[0] for data in data_list]
 
     print(len(protein_list))
@@ -302,14 +306,14 @@ if __name__ == "__main__":
     save_args = {
         #save setting
         'plot_title': 'test_set',
-        'date': '240618',
-        'model_name': 'GearNetEdge',
+        'date': '240730',
+        'model_name': 'GVP',
         'version': 'v1',
-        'result_dir': f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/prediction',
+        'result_dir': f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/prediction_esm',
         'prediction_csv': None,
         'cluster':cluster,
         'protein_name': protein_name,
-        'graph_type': graph_type,  ## 'GearNetEdge' or 'GVP'
+        'graph_type': graph_type,  ## 'GearNetEdge' or 'GVP' or 'Bilstm36'
         'device': device,
 
         #prediction setting
@@ -323,7 +327,7 @@ if __name__ == "__main__":
     
     for i in range(1):
         #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_{cluster}_hop1_v{i}.pth'
-        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240601_finalExp/model_GearNet_epoch150_cluster2.pth'
-        save_args['prediction_csv'] = f"HDX_pred_{save_args['graph_type']}_{protein_name}_{cluster}_v{i}.csv"
+        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240725_GVP/model_GVP1280_{cluster}_radius5+selfEdge_v{i}.pth'
+        save_args['prediction_csv'] = f"HDX_pred_GVP1280_{protein_name}_{cluster}_v{i}.csv"
         main(save_args)
     

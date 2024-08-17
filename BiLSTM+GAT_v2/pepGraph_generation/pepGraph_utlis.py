@@ -136,6 +136,7 @@ class RawInputData:
     def construct_embedding(self):
         # construct embedding
         embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.hse, self.dihedrals, self.orientations), dim=1)
+        ########### Dims:          30            5              4                   1            1         3            6                4          = 54 ###########
         return embedding
     
     def merge(self, data):

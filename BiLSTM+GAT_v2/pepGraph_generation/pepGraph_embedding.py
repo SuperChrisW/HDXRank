@@ -159,7 +159,7 @@ if __name__ == "__main__":
     for id, row in df.iterrows():
         pdb_fname = str(row['structure_file']).upper().split('.')[0]
         hhm_fname = str(row['note'])
-        if hhm_fname == '6N1Z':
+        if hhm_fname == '1UGH':
             continue
 
         protein_chain = row['protein_chain'].split(',')
@@ -173,7 +173,7 @@ if __name__ == "__main__":
             generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, 
                                 protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)
         else:
-            model_list = [f'MODEL_{i}_REVISED' for i in range(1, 501)]
+            model_list = [f'MODEL_{i}_REVISED' for i in range(1, 1001)]
             for model in model_list:
                 generate_embedding(structure_dir, hhm_dir, save_dir, model, hhm_fname, 
                                     protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)

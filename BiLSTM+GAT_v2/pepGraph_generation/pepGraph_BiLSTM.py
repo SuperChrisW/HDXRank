@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric as tg
-from torch_geometric.nn import GCNConv, SAGEConv, GATConv, global_mean_pool as gmp
+from torch_geometric.nn import GCNConv, SAGEConv, GATConv, global_add_pool as gmp
 
 
 class BiLSTM(nn.Module):
@@ -48,12 +48,12 @@ class BiLSTM(nn.Module):
         x = torch.cat((SASA, HDMD, HHblites), dim=3)
         x = x.reshape(-1, 1, 30, 36)
         '''
-        x = x.permute(0, 1, 3, 2)
+        #x = x.permute(0, 1, 3, 2)
         ### Convolutional layers
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.pool(x)
-        x = x.permute(0, 2, 1, 3)  # Flatten for LSTM
+        x = x.permute(0, 3, 1, 2)  # Flatten for LSTM
         x = x.reshape(-1, x.shape[1], x.shape[2]*x.shape[3])
         ### LSTM layers
         x = self.dropout(x)
@@ -121,66 +121,48 @@ class BiLSTM_36(nn.Module):
         x = F.sigmoid(self.fc2(x))
         return x.squeeze(-1)
 
-class GNN_v2(nn.Module):
+class GAT(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.feat_in_dim = args['feat_in_dim']
-        self.topo_in_dim = args['topo_in_dim']
         self.hidden_dim = args['GNN_hidden_dim']
         self.module_out_dim = args['GNN_out_dim']
         self.num_heads = args['num_heads']
         self.drop_rate = args['drop_out']
         self.num_GNN_layers = args['num_GNN_layers']
 
-        # Separate GAT layers for feature and topology matrices
-        self.gat_layers_feat = nn.ModuleList([
+        # GAT layers
+        self.gat_layers = nn.ModuleList([
             GATConv(self.feat_in_dim, self.hidden_dim, heads=self.num_heads, dropout=self.drop_rate) if i == 0 else
-            GATConv(self.hidden_dim * self.num_heads, self.hidden_dim, heads=self.num_heads) if i < self.num_GNN_layers - 1 else
-            GATConv(self.hidden_dim * self.num_heads, self.module_out_dim, heads=self.num_heads)
+            GATConv(self.hidden_dim * self.num_heads, self.hidden_dim, heads=self.num_heads, dropout=self.drop_rate) if i < self.num_GNN_layers - 1 else
+            GATConv(self.hidden_dim * self.num_heads, self.module_out_dim, heads=self.num_heads, dropout=self.drop_rate)
             for i in range(self.num_GNN_layers)
         ])
 
-        self.gat_layers_topo = nn.ModuleList([
-            GATConv(self.topo_in_dim, self.hidden_dim, heads=self.num_heads, dropout=self.drop_rate) if i == 0 else
-            GATConv(self.hidden_dim * self.num_heads, self.hidden_dim, heads=self.num_heads) if i < self.num_GNN_layers - 1 else
-            GATConv(self.hidden_dim * self.num_heads, self.module_out_dim, heads=self.num_heads)
-            for i in range(self.num_GNN_layers)
+        self.batch_norms = nn.ModuleList([
+            nn.BatchNorm1d(self.hidden_dim * self.num_heads) for _ in range(self.num_GNN_layers - 1)
         ])
-
+        
         self.drop_out = nn.Dropout(self.drop_rate)
-        self.fc = nn.Linear(self.module_out_dim * self.num_heads * 2, self.module_out_dim)  # Adjusted for concatenated vector
-
-    def reset_parameters(self):
-        for layer in self.gat_layers_feat:
-            layer.reset_parameters()
-        for layer in self.gat_layers_topo:
-            layer.reset_parameters()
-        self.fc.reset_parameters()
-
-    def forward_branch(self, branch_layers, x, edge_index):
-        for layer in branch_layers:
-            x = F.relu(layer(x, edge_index))
-            x = self.drop_out(x)
-        return x
+        self.fc = nn.Linear(self.module_out_dim * self.num_heads, 1)
 
     def forward(self, graph_data):
-        topo_x = graph_data.x[:, self.feat_in_dim:self.feat_in_dim + self.topo_in_dim]
-        feat_x = graph_data.x[:, :self.feat_in_dim]
-        
-        batch = graph_data.batch
-        edge_index = graph_data.edge_index
+        x = graph_data['residue'].node_s['residue'][:, :self.feat_in_dim]
+        num_nodes = graph_data['residue'].num_nodes
+        self_loops = torch.arange(0,num_nodes, device = x.device)
+        self_loops = self_loops.unsqueeze(0).repeat(2,1)
+        edge_index = graph_data.edge_index_dict[('residue', 'radius_edge', 'residue')]
+        edge_index = torch.cat([edge_index, self_loops], dim=1)
+        batch = graph_data['residue'].batch
 
-        # Process feature and topology matrices separately
-        processed_feat = self.forward_branch(self.gat_layers_feat, feat_x, edge_index)
-        processed_topo = self.forward_branch(self.gat_layers_topo, topo_x, edge_index)
+        for i, layer in enumerate(self.gat_layers):
+            x = F.relu(layer(x, edge_index))
+            if i < len(self.batch_norms):
+                x = self.batch_norms[i](x)
+            x = self.drop_out(x)
 
-        # Concatenate processed features and topology matrices
-        x = torch.cat((processed_feat, processed_topo), dim=-1)
-
-        # Global mean pooling
         x = gmp(x, batch)
+        x = self.fc(x)
+        x = torch.sigmoid(x)
         
-        # Fully connected layer
-        x = torch.sigmoid(self.fc(x))
-        
-        return x
+        return x.squeeze(-1)

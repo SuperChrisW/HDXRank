@@ -12,7 +12,7 @@ class BiLSTM(nn.Module):
         self.out_channels = args['num_out_channels']
         self.module_out_dim = args['LSTM_out_dim']
         self.drop_rate = args['drop_out']
-        self.feat_in_dim = args['feat_in_dim']
+        self.feat_in_dim = args['feat_in_dim']+args['topo_in_dim']
 
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=self.hidden_channels, kernel_size=(5, 5), padding='same')
         self.bn1 = nn.BatchNorm2d(self.hidden_channels)
@@ -21,7 +21,7 @@ class BiLSTM(nn.Module):
 
         stride = 1
         kernel_size = 3
-        input_width = args['feat_in_dim']+args['topo_in_dim']
+        input_width = self.feat_in_dim
         input_height = 30
         output_height = (input_height - kernel_size) // stride + 1
         output_width = (input_width - kernel_size) // stride + 1
@@ -40,14 +40,14 @@ class BiLSTM(nn.Module):
         self.output_fc.reset_parameters()
 
     def forward(self, x):
-        #x = x.reshape(-1, 1, 30, self.feat_in_dim+1)
-        x = x.permute(0, 1, 3, 2)
+        x = x.reshape(-1, 1, 30, self.feat_in_dim)
+        #x = x.permute(0, 1, 3, 2)
         ### Convolutional layers
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.pool(x)
 
-        x = x.permute(0, 2, 1, 3)  # Flatten for LSTM
+        x = x.permute(0, 3, 1, 2)  # Flatten for LSTM
         x = x.reshape(-1, x.shape[1], x.shape[2]*x.shape[3])
 
         ### LSTM layers
@@ -260,7 +260,6 @@ class GCN(nn.Module):
         pred = self.mlp(graph_feature).squeeze(-1)
 
         return nn.functional.sigmoid(pred)
-
 
 class MQAModel(nn.Module):
     '''
