@@ -6,9 +6,7 @@ import networkx as nx
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-import torch_geometric
 from torch_geometric.data import HeteroData
-import torch_cluster
 from torch_cluster import knn_graph, radius_graph
 
 from torchdrug import data
@@ -21,6 +19,8 @@ import warnings
 warnings.filterwarnings("ignore", category=BiopythonWarning)
 
 from GVP_graphdataset import ProteinGraphDataset, _rbf, _normalize
+from sklearn.preprocessing import MinMaxScaler
+min_max_scaler = MinMaxScaler()
 
 class atoms(object):
     _registry = {}
@@ -87,7 +87,7 @@ def parse_PDB(PDB_path, protein_chains=['A'], atom_type_list=['N','CA','C', 'O']
         print(f"Error: File not found. {PDB_path}")
         return None
     
-    chain_data = {chain: {'nodes': [], 'backbone_coord': np.zeros((4, 3), dtype=np.float32), 'last_res': 0, 'last_res_info': None} for chain in protein_chains}
+    chain_data = {chain: {'nodes': [], 'backbone_coord': np.zeros((len(atom_type_list), 3), dtype=np.float32), 'last_res': 0, 'last_res_info': None} for chain in protein_chains}
     with open(PDB_path, 'r') as f:
         for line in f:
             if line.startswith('ATOM'):
@@ -117,7 +117,7 @@ def parse_PDB(PDB_path, protein_chains=['A'], atom_type_list=['N','CA','C', 'O']
                                 'chain_id': protein_chains.index(chain_info['last_res_info'][2])
                             }
                         )
-                        chain_info['backbone_coord'] = np.zeros((4, 3), dtype=np.float32)
+                        chain_info['backbone_coord'] = np.zeros((len(atom_type_list), 3), dtype=np.float32)
                     
                     chain_info['last_res'] = n_res
                     chain_info['last_res_info'] = [res_type, n_res, chain_id]
@@ -204,32 +204,23 @@ def read_HDX_table(HDX_df, proteins, states, chains, correction, protein_chains,
     else:
         return True
 
-def rescale(data):
-    data_max = np.max(data, axis=0)
-    data_min = np.min(data, axis=0)
-    
-    # Avoid division by zero for constant columns by setting 0/0 to 0 directly
-    range = np.where(data_max - data_min == 0, 1, data_max - data_min)
-    rescaled_data = np.nan_to_num((data - data_min) / range, nan=0.0)
-    return rescaled_data
-
 def attach_node_attributes(G, embedding_file):
     if isinstance(embedding_file, str):
         embedding_data = torch.load(embedding_file)
-        protein_embedding = rescale(embedding_data['embedding'].detach().numpy())# revise the feat attached here
+        protein_embedding = min_max_scaler.fit_transform(embedding_data['embedding'].detach().numpy())# revise the feat attached here
         protein_embedding = np.concatenate([protein_embedding[:,:35],protein_embedding[:,40:41], protein_embedding[:,56:]], axis=-1) # 36 feat. used in AI-HDX + 42 heteroatom feat.
     else:
         protein_embedding = embedding_file
     
     if protein_embedding.shape[0] == G.number_of_nodes():
         for node, embedding in zip(G.nodes(), protein_embedding):
-            G.nodes[node]['x'] = embedding
+            G.nodes[node]['x'] = torch.as_tensor(embedding)
         return G
     else:
         print('embedding shape does not match with the graph nodes')
         return None
 
-def ResGraph(pdb_file, protEmbed_dict, protein_chains = ['A']): # create networkx and torchdrug graphs
+def ResGraph(pdb_file, protEmbed_dict, protein_chains = ['A']): # create networkx graphs
     size_limit = {key:value.shape[0] for key, value in protEmbed_dict.items()}
     print('size limit:', size_limit)
     nodes = parse_PDB(pdb_file, protein_chains=protein_chains, size_limit=size_limit)
@@ -244,6 +235,8 @@ def ResGraph(pdb_file, protEmbed_dict, protein_chains = ['A']): # create network
             embedding = protEmbed_dict[key]
         else:
             embedding = torch.cat([embedding, protEmbed_dict[key]], dim=0)
+            
+    embedding = min_max_scaler.fit_transform(embedding.detach().numpy())
     G = attach_node_attributes(G, embedding)
     if G is None:
         return None
@@ -251,7 +244,7 @@ def ResGraph(pdb_file, protEmbed_dict, protein_chains = ['A']): # create network
         res(node[1]['residue_id'], node[1]['res_name'], node[1]['chain_id'], node[1]['residue_coord'])
     return G
 
-def add_edges(G, coord = None, max_distance=10, min_distance=5):
+def add_edges(G, edge_to_add, coord = None, max_distance=10, min_distance=5):
     batch = torch.tensor([0] * len(G.nodes))
     if coord is not None:
         node_coord = torch.as_tensor(coord, dtype=torch.float32)
@@ -260,48 +253,52 @@ def add_edges(G, coord = None, max_distance=10, min_distance=5):
         node_coord = torch.tensor(node_coord, dtype = torch.float32)
 
     # add radius edges
-    edge_index = radius_graph(node_coord, r=max_distance, batch=batch, loop=False)
-    edge_list = edge_index.t().tolist()
-    for u, v in edge_list:
-        if u < v:
-            G.add_edge(u, v, edge_type='radius_edge')
-    print('add radius edges:', G.number_of_edges())
+    if 'radius_edge' in edge_to_add:
+        edge_index = radius_graph(node_coord, r=max_distance, batch=batch, loop=False)
+        edge_list = edge_index.t().tolist()
+        for u, v in edge_list:
+            if u < v:
+                G.add_edge(u, v, edge_type='radius_edge')
+        print('add radius edges:', G.number_of_edges())
 
     # add knn edges
-    '''edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
-    edge_list = edge_index.t().tolist()
-    for u, v in edge_list:
-        if u < v:
-            G.add_edge(u, v, edge_type='knn_edge')
-    print('add knn edges:', G.number_of_edges())'''
+    if 'knn_edge' in edge_to_add:
+        edge_index = knn_graph(node_coord, k=10, batch=batch, loop=False)
+        edge_list = edge_index.t().tolist()
+        for u, v in edge_list:
+            if u < v:
+                G.add_edge(u, v, edge_type='knn_edge')
+        print('add knn edges:', G.number_of_edges())
 
     # remove edges with distance smaller than min_distance
-    '''edges_to_remove = []
-    for u, v in G.edges():
-        u_coord = node_coord[u]
-        v_coord = node_coord[v]
-        distance = torch.norm(u_coord - v_coord, dim=0)
-        if distance < min_distance:
-            if (u,v) not in edges_to_remove:
-                edges_to_remove.append((u, v))
-    G.remove_edges_from(edges_to_remove)
-    print('after removing edges:', G.number_of_edges())'''
+    if 'remove_edge' in edge_to_add:
+        edges_to_remove = []
+        for u, v in G.edges():
+            u_coord = node_coord[u]
+            v_coord = node_coord[v]
+            distance = torch.norm(u_coord - v_coord, dim=0)
+            if distance < min_distance:
+                if (u,v) not in edges_to_remove:
+                    edges_to_remove.append((u, v))
+        G.remove_edges_from(edges_to_remove)
+        print('after removing edges:', G.number_of_edges())
 
     # add sequential edges
-    '''i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
-    for node in G.nodes:
-        res_id = G.nodes[node]['residue_id']
-        chain = G.nodes[node]['chain_id']
-        if (chain,res_id+1) in i2res_id.keys():
-            G.add_edge(node, node+1, edge_type='forward_1_edge')
-        if (chain,res_id+2) in i2res_id.keys():
-            G.add_edge(node, node+2, edge_type='forward_2_edge')
-        if (chain,res_id-1) in i2res_id.keys():
-            G.add_edge(node, node-1, edge_type='backward_1_edge')
-        if (chain,res_id-2) in i2res_id.keys():
-            G.add_edge(node, node-2, edge_type='backward_2_edge')  
-        G.add_edge(node, node, edge_type='self_edge')
-    print('add sequential edges:', G.number_of_edges())'''
+    if 'sequential_edge' in edge_to_add:
+        i2res_id = {(data['chain_id'], data['residue_id']): node for node, data in G.nodes(data=True)}
+        for node in G.nodes:
+            res_id = G.nodes[node]['residue_id']
+            chain = G.nodes[node]['chain_id']
+            if (chain,res_id+1) in i2res_id.keys():
+                G.add_edge(node, node+1, edge_type='forward_1_edge')
+            if (chain,res_id+2) in i2res_id.keys():
+                G.add_edge(node, node+2, edge_type='forward_2_edge')
+            if (chain,res_id-1) in i2res_id.keys():
+                G.add_edge(node, node-1, edge_type='backward_1_edge')
+            if (chain,res_id-2) in i2res_id.keys():
+                G.add_edge(node, node-2, edge_type='backward_2_edge')  
+            G.add_edge(node, node, edge_type='self_edge')
+        print('add sequential edges:', G.number_of_edges())
 
     return G
 
@@ -401,18 +398,14 @@ def networkx_to_tgG(G): # convert to torchdrug protein graph
     return protein
 
 def create_graph_(pdb_fpath, embedding_dir, fasta_dir, feat_identifier, protein_chains, embedding_type = 'esm2', max_distance = 5.0, min_distance = 0.0):       
-
-    '''if embedding_type == 'manual':
-        embedding_fpath = os.path.join(embedding_dir, f'{apo_identifier}.pt') # manual embedding
-        G = attach_node_attributes(G, embedding_fpath)'''
     if isinstance(feat_identifier, str):
         feat_identifier = [feat_identifier]
     
-    print(feat_identifier, protein_chains)
-    assert len(feat_identifier) == len(protein_chains), "Number of feature identifiers does not match the number of protein chains."
-
+    protEmbed_dict = {}
     if embedding_type == 'esm2':
-        protEmbed_dict = {}
+        print(feat_identifier, protein_chains)
+        assert len(feat_identifier) == len(protein_chains), "Number of feature identifiers does not match the number of protein chains."
+
         for feat_id, chain_set in zip(feat_identifier, protein_chains):
             for chain in chain_set:
                 embedding_fpath = os.path.join(embedding_dir, f"{feat_id}_{chain}.pt")
@@ -433,21 +426,33 @@ def create_graph_(pdb_fpath, embedding_dir, fasta_dir, feat_identifier, protein_
                     chain_embedding = chain_embedding[present_residues]
                 else:
                     print("All residues are marked as missing in the FASTA sequence.")
-
                 protEmbed_dict[chain] = chain_embedding
-        print('creating whole protein graph')
-        G = ResGraph(pdb_fpath, protEmbed_dict, protein_chains=list(protEmbed_dict.keys())) # load protein and record backbone coordinations
-        if G is None:
-            return None
 
-        G.graph['protein_chains'] = list(protEmbed_dict.keys())
+    elif embedding_type == 'manual':
+        embedding_fpath = os.path.join(embedding_dir, f"{feat_identifier[0]}.pt")
+        if not os.path.isfile(embedding_fpath):
+            print("Cannot find embedding file:", embedding_fpath)
+            return None
+        embedding_dict = torch.load(embedding_fpath)
+        protein_embedding = embedding_dict['embedding']
+        chain_label = np.array(embedding_dict['chain_label'])
+        for chain in set(chain_label):
+            mask = (chain_label == chain)
+            protEmbed_dict[chain] = protein_embedding[mask][:,:56] # remove the heteroatom features
     else:
         raise ValueError("Unknown embedding type:", embedding_type)
+
+    print('creating whole protein graph')
+    G = ResGraph(pdb_fpath, protEmbed_dict, protein_chains=list(protEmbed_dict.keys()))
+    if G is None:
+        return None
+    G.graph['protein_chains'] = list(protEmbed_dict.keys())
 
     residue_coord = np.array([G.nodes[node]['residue_coord'] for node in G.nodes()])
     coords = torch.as_tensor(residue_coord, dtype=torch.float32)
     coords = coords[:,1,:]
-    G = add_edges(G, coord=coords, max_distance=max_distance, min_distance=min_distance)
+    edge_to_add = ['radius_edge', 'knn_edge', 'sequential_edge', 'remove_edge']
+    G = add_edges(G, edge_to_add, coord=coords, max_distance=max_distance, min_distance=min_distance)
     print(G)
     return G
 
@@ -464,7 +469,7 @@ def load_pep(HDX_fpath, chain_identifier, correction, protein, state, protein_ch
         HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
         HDX_df = HDX_df[HDX_df['sequence'].str.len() < max_len]
         HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
-        HDX_df = HDX_df.reset_index(drop=True)
+        #HDX_df = HDX_df.reset_index(drop=True)
         print('after filtering:', HDX_df.shape)
         
         if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction, 
@@ -561,7 +566,7 @@ def split_graph(G, max_len = 30, complex_state_id = 0, graph_type = 'GVP'):
             subG.graph['range'] = (peptide.start, peptide.end)
             subG.graph['chain'] = peptide.chain
             subG.graph['is_complex'] = complex_state_id    
-            #subG.graph['seq_embedding'] = seq_embedding
+            subG.graph['seq_embedding'] = seq_embedding
             data = networkx_to_tgG(subG)
             graph_ensemble.append(data)
     return graph_ensemble
@@ -614,28 +619,31 @@ class modified_GVPdataset(ProteinGraphDataset):
         return protein
 
 class pepGraph(Dataset):
-    def __init__(self, keys, root_dir, cluster_index, max_len=30, min_distance = 0.0 , max_distance = 5.0,
-                 protein_name = None, truncation_window_size = None, graph_type = 'GearNet', embedding_type = 'esm2'):
+    def __init__(self, keys, root_dir, save_dir, cluster_index, max_len=30, min_distance = 3.0 , max_distance = 8.0,
+                 protein_name = None, truncation_window_size = None, graph_type = 'GearNet', embedding_type = 'esm2', usage = 'train'):
         self.keys = keys
         self.root_dir = root_dir
         self.cluster_index = cluster_index
-
         self.graph_type = graph_type
         self.embedding_type = embedding_type
-        #self.pdb_dir = os.path.join(root_dir, 'structure', f'AF_{protein_name}')
-        #self.pdb_dir = os.path.join(root_dir, 'structure', f'{protein_name}')
-        #self.save_dir = os.path.join(root_dir, 'graph_ensemble_simpleGVP', f'{protein_name}', f'cluster{cluster_index}_{int(max_distance)}A_esm')
-        self.pdb_dir = os.path.join(root_dir, 'structure')        
+        self.save_dir = save_dir
         self.hdx_dir = os.path.join(root_dir, 'HDX_files')
-        self.fasta_dir = os.path.join(root_dir, 'fasta_files')
-        self.save_dir = os.path.join(root_dir, 'graph_ensemble_simpleGVP', f'cluster{cluster_index}_{int(max_distance)}A_esm')
+        self.fasta_dir = os.path.join(root_dir, 'fasta_files')        
 
-        #self.embedding_dir = os.path.join(root_dir, 'embedding_files', hdock_protein)
+        if usage == 'train':
+            self.pdb_dir = os.path.join(root_dir, 'structure')
+        elif usage == 'hdock':
+            self.pdb_dir = os.path.join(root_dir, 'structure', f'{protein_name}')
 
         if self.embedding_type == 'manual':
-            self.embedding_dir = os.path.join(root_dir, 'embedding_files') #maunual embedding
+            if usage == 'train':
+                self.embedding_dir = os.path.join(root_dir, 'embedding_files')
+            elif usage == 'hdock':
+                self.embedding_dir = os.path.join(root_dir, 'embedding_files', protein_name) #maunual embedding
+            else:
+                raise ValueError(f'Unsupported usage: {usage}')
         elif self.embedding_type == 'esm2':
-            self.embedding_dir = os.path.join(root_dir, 'esm2') # esm2 embedding
+            self.embedding_dir = os.path.join(root_dir, 'esm2')
         else:
             raise ValueError(f'Unsupported embedding type: {self.embedding_type}')
 
@@ -690,8 +698,12 @@ class pepGraph(Dataset):
             return None
 
         # residue graph generation #
-        G = create_graph_(pdb_fpath, self.embedding_dir, self.fasta_dir, feat_identifier, protein_chains, embedding_type = self.embedding_type, 
-                          max_distance = self.max_distance, min_distance = self.min_distance)
+        if self.embedding_type == 'manual':
+            G = create_graph_(pdb_fpath, self.embedding_dir, self.fasta_dir, apo_identifier, protein_chains, embedding_type = self.embedding_type, 
+                            max_distance = self.max_distance, min_distance = self.min_distance)
+        elif self.embedding_type == 'esm2':
+            G = create_graph_(pdb_fpath, self.embedding_dir, self.fasta_dir, feat_identifier, protein_chains, embedding_type = self.embedding_type, 
+                            max_distance = self.max_distance, min_distance = self.min_distance)
         if G is None:
             print("Cannot create graph")
             return None

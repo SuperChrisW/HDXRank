@@ -34,9 +34,11 @@ def test_model(model, test_loader, device, graph_type = 'GearNetEdge'):
     try:
         for i, graph_batch in enumerate(test_loader):
                 graph_batch = graph_batch.to(device)
-                if graph_type == 'GearNetEdge':
+                if graph_type == 'GearNet':
                     targets = graph_batch.y
-                    outputs = model(graph_batch, graph_batch.residue_feature.float())
+                    #node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom encoding
+                    node_feat = graph_batch.residue_feature.float()
+                    outputs = model(graph_batch, node_feat)
                     range_list.extend(graph_batch.range.cpu().detach().numpy())
                     chain_list.extend(graph_batch.chain.cpu().detach().numpy())
                     y_pred.append(outputs.cpu().detach().numpy())
@@ -157,7 +159,9 @@ def load_data(df, pepGraph_dir, merged_config):
         if os.path.isfile(pepGraph_file):
             pepGraph_ensemble = torch.load(pepGraph_file) # list of graphs
             input_data.extend(pepGraph_ensemble)
-    if merged_config['graph_type'] == 'GearNetEdge':
+        else:
+            print('file not exist:', pepGraph_file)
+    if merged_config['graph_type'] == 'GearNet':
         test_set = data.Protein.pack(input_data)
         test_set.view = 'residue'
         test_loader = data.DataLoader(test_set, batch_size = merged_config['batch_size'], shuffle=False, num_workers=merged_config['num_workers'])
@@ -170,12 +174,12 @@ def load_data(df, pepGraph_dir, merged_config):
 
 def main(save_args):
     ##################################### initial setting #####################################
-    root_dir = "/home/lwang/models/HDX_LSTM/data/Latest_test/hdock"
+    root_dir = "/home/lwang/models/HDX_LSTM/data/hdock"
     HDX_summary_file = f'{root_dir}/hdock.xlsx'
     hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
     hdx_df = hdx_df.dropna(subset=['structure_file'])
     #pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_{save_args['graph_type']}", f"{save_args['protein_name']}", f"{save_args['cluster']}")
-    pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_simpleGVP", f"{save_args['protein_name']}", f"{save_args['cluster']}")
+    pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_GearNet", f"{save_args['protein_name']}", f"{save_args['cluster']}")
     model_path = save_args['model_path']
 
     device = save_args['device']
@@ -186,7 +190,7 @@ def main(save_args):
     'batch_size': 16,
     'learning_rate': 0.001,
     'weight_decay': 5e-4,
-    'GNN_type': 'GAT',
+    'GNN_type': 'GearNet',
     'num_GNN_layers': 3,
     'cross_validation_num': 1,
     'num_workers': 4,
@@ -195,8 +199,8 @@ def main(save_args):
     #model setting
     'num_hidden_channels': 10,
     'num_out_channels': 20,
-    'feat_in_dim': 56-62, #bilstm 36
-    'topo_in_dim': 42,
+    'feat_in_dim': 56, #bilstm 36: 56-62, GVP 1280: 1280, GearNet: 56
+    'topo_in_dim': 0,
     'num_heads': 8,
     'GNN_hidden_dim': 32,
     'GNN_out_dim': 64,
@@ -210,8 +214,8 @@ def main(save_args):
 
     ##################################### model setting #####################################
     #GearNet
-    #model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
-    #                num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
+    model = GearNet(input_dim = merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims = [512,512,512],
+                    num_relation=7, batch_norm=True, concat_hidden=True, readout='sum', activation = 'relu', short_cut=True)
     
     #GearNet-Edge
     #model = GearNet(input_dim=merged_config['feat_in_dim']+merged_config['topo_in_dim'], hidden_dims=[512, 512, 512], 
@@ -225,16 +229,19 @@ def main(save_args):
     #model = GCN(merged_config).to(device)
 
     # GVP-GNN
-    node_in_dim = (1280,3) # 78 or 98 or 1280
+    '''node_in_dim = (56,3) # 78 or 98 or 1280
     node_h_dim = (1280, 12) # 392 or 1280
     edge_in_dim = (32,1)
     edge_h_dim = (128, 4)
-    metadata = (['residue'], [('residue', 'radius_edge', 'residue')])
+    #metadata = (['residue'], [('residue', 'radius_edge', 'residue')])
+    metadata = (['residue'], [('residue', 'radius_edge', 'residue'), ('residue', 'knn_edge', 'residue'), ('residue', 'forward_1_edge', 'residue'), ('residue', 'backward_1_edge', 'residue'),
+                               ('residue', 'forward_2_edge', 'residue'), ('residue', 'backward_2_edge', 'residue'), ('residue', 'self_edge', 'residue')])
     model = MQAModel(node_in_dim, node_h_dim, 
         edge_in_dim, edge_h_dim, metadata,
-        num_layers=3, drop_rate=0.5)
+        num_layers=config['num_GNN_layers'], drop_rate=config['drop_out'])'''
     
     model_state_dict = torch.load(model_path, map_location=device)
+    model_state_dict = model_state_dict['model_state_dict'] # add if saved as checkpoint
     model.load_state_dict(model_state_dict)
     model = model.to(device)
     print('model loaded successfully!')
@@ -293,23 +300,23 @@ if __name__ == "__main__":
     #protein_name  = 'Hdock_DeltaRBD+V16noext'
     #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
 
-    cluster = 'cluster1_5A_esm'
-    protein_name = '8F7A_epi'
-    graph_type = 'GVP'
-    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+    cluster = 'cluster1_8A_manual_rescale'
+    protein_name = '8F7A_1016'
+    graph_type = 'GearNet'
+    epoch = [60, 70, 80]
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/graph_ensemble_simpleGVP/{protein_name}/{cluster}')
+    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/hdock/graph_ensemble_GearNet/{protein_name}/{cluster}')
     protein_list = [data.split('.')[0] for data in data_list]
 
     print(len(protein_list))
-
     save_args = {
         #save setting
         'plot_title': 'test_set',
         'date': '240730',
-        'model_name': 'GVP',
+        'model_name': 'GearNet',
         'version': 'v1',
-        'result_dir': f'/home/lwang/models/HDX_LSTM/data/Latest_test/hdock/prediction_esm',
+        'result_dir': f'/home/lwang/models/HDX_LSTM/data/hdock/prediction/1016/',
         'prediction_csv': None,
         'cluster':cluster,
         'protein_name': protein_name,
@@ -325,9 +332,20 @@ if __name__ == "__main__":
         'show_pred': True,
         }
     
-    for i in range(1):
-        #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_{cluster}_hop1_v{i}.pth'
-        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240725_GVP/model_GVP1280_{cluster}_radius5+selfEdge_v{i}.pth'
-        save_args['prediction_csv'] = f"HDX_pred_GVP1280_{protein_name}_{cluster}_v{i}.csv"
+    for i in range(len(epoch)):
+        # 240619 GearNet success in 1UGH, 6DJL, 6N1Z, 8F7A
+        #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_cluster1_hop1_v{i}.pth'
+
+        # 240730 GVP
+        #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240817_GVP/model_GVP56_cluster1_8A_manual_rad8+knn+seqEdge_layer5_v0.pth'
+        #save_args['prediction_csv'] = f"HDX_pred_GVP56_{protein_name}_{cluster}_v{i}.csv"
+        #main(save_args)
+
+        #240920 GearNet better performance in test set
+        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240918_GVP/model_GN56_cluster1_8A_manual_rescale_v0_epoch{epoch[i]-1}.pth'
+        save_args['prediction_csv'] = f"HDX_pred_GearNet56_{protein_name}_{cluster}_v{i}.csv"
+        save_args['result_dir'] = f'/home/lwang/models/HDX_LSTM/data/hdock/prediction/1016/GN56_epoch{epoch[i]}'
+        if not os.path.exists(save_args['result_dir']):
+            os.mkdir(save_args['result_dir'])
         main(save_args)
     

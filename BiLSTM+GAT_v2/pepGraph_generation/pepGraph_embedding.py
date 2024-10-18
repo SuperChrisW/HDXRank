@@ -70,11 +70,10 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
     NA_inputs = []
     SM_inputs = []
 
-    #try:
     for chain in chains:
         chain_id = chain.get_id()
         hhm_file = os.path.join(hhm_dir, f'{hhm_fname}_{chain_id}.hhm') ## FIXME: change to the correct path
-
+        print(hhm_file)
         if chain_id in protein_chain:
             if os.path.isfile(hhm_file) and os.path.isfile(pdb_file):
                 #print('loading:', hhm_file, pdb_file)
@@ -90,9 +89,6 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
     ### merging protein, NA, and SM ###
     embedding = [protein.construct_embedding() for protein in protein_inputs]
     embed_mtx = torch.cat(embedding, dim=0) #FIXME: not include index and residue type
-    #except Exception as e:
-    #    print(e)
-    #    continue
 
     ### find contact residues of NA and SM ###
     chain_list = [chain for chain in structure.get_chains() if chain.id in protein_chain]
@@ -143,38 +139,52 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_test/hdock'
+    root_dir = '/home/lwang/models/HDX_LSTM/data/hdock/'
+    protein_name = '8F7A_1016'
+    N_model = 4000
 
     hhm_dir = os.path.join(root_dir, 'hhm_files')
     save_dir = os.path.join(root_dir, 'embedding_files')
-    structure_dir = os.path.join(root_dir, 'structure')
+    structure_dir = os.path.join(root_dir, 'structure', protein_name)
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    df = pd.read_excel(f'{root_dir}/merged_data.xlsx', sheet_name='hdock_modeling') ## sheet2 is the sheet for test set
+    df = pd.read_excel(f'{root_dir}/test_data_AF.xlsx', sheet_name='hdock_ori') ## 'hdock_ori' or 'hdock_modeling'
     df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
+    df = df[df['note'] == protein_name[:4]]
     fail_list = []
     chemdata = ChemData()
 
     for id, row in df.iterrows():
         pdb_fname = str(row['structure_file']).upper().split('.')[0]
         hhm_fname = str(row['note'])
-        if hhm_fname == '1UGH':
-            continue
 
         protein_chain = row['protein_chain'].split(',')
         NA_chain = row['NA_chain'].split(',') if not pd.isnull(row['NA_chain']) else []
         SM_chain = row['SM_chain'].split(',') if not pd.isnull(row['SM_chain']) else []
 
-        structure_dir = os.path.join(root_dir, 'structure', hhm_fname)
-        save_dir = os.path.join(root_dir, 'embedding_files', hhm_fname)
+        structure_dir = os.path.join(root_dir, 'structure', protein_name)
+        save_dir = os.path.join(root_dir, 'embedding_files', protein_name)
+
+        if not os.path.isdir(save_dir):
+            os.mkdir(save_dir)
+        if os.path.isfile(f'{save_dir}/{pdb_fname}.pt'):
+            print('file exist')
+            continue
 
         if pdb_fname.split(":")[0] != 'MODEL':
-            generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, 
+            if row['complex_state'] == 'protein complex':
+                continue
+            generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, pdb_fname, 
                                 protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)
         else:
-            model_list = [f'MODEL_{i}_REVISED' for i in range(1, 1001)]
+            '''
+            for complex structure with chain A and B,
+            there should have a hhm file of '{hhm_fname}_A.hhm' and '{hhm_fname}_B.hhm' which are copied from the apo structure hhm file
+            '''
+
+            model_list = [f'MODEL_{i}_REVISED' for i in range(1, N_model+1)]
             for model in model_list:
                 generate_embedding(structure_dir, hhm_dir, save_dir, model, hhm_fname, 
                                     protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)
-            pass
+

@@ -19,13 +19,13 @@ from pepGraph_model import MixBiLSTM_GearNet, BiLSTM
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
+from scipy.stats import spearmanr
+
 
 
 def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log):
-    rp_train = []
-    rmse_train_list = []
-    best_val_loss = float('inf')
 
     for epoch in range(num_epochs):
         list1_train = []
@@ -39,8 +39,9 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             graph_batch = graph_batch.to(device)
             targets = graph_batch['residue'].y
             #new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
-            #outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
-            outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1)) # for BiLSTM
+            new_embedding = graph_batch['residue'].seq_embedding
+            outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
+            #outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1)) # for BiLSTM
 
             train_loss = loss_fn(outputs, targets)
             train_loss.backward()
@@ -53,48 +54,99 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             list2_train=np.append(list2_train,outputs)
 
         epoch_train_losses = np.mean(epoch_train_losses)
-        epoch_rp_train = np.corrcoef(list2_train, list1_train)[0,1]
-        rp_train.append(np.mean(epoch_rp_train))
 
         x = np.array(list1_train).reshape(-1,1)
         y = np.array(list2_train).reshape(-1,1)
-        epoch_train_rmse= np.sqrt(((y - x) ** 2).mean())
-        rmse_train_list.append(epoch_train_rmse)
-
-        print('Epoch  Train Loss  PCC Train  Train RMSE')
-        print("{:5d}  {:10.3f}  {:9.3f}  {:10.3f}".format(
-        epoch, epoch_train_losses, epoch_rp_train, epoch_train_rmse))
+        epoch_train_rmse= np.sqrt(mean_squared_error(x, y))
+        epoch_rp_train = spearmanr(x, y)[0]
         
         if data_log:
             experiment.log_metric('train_loss', epoch_train_losses, step = epoch)
-            experiment.log_metric('train_pcc', epoch_rp_train, step = epoch)
+            experiment.log_metric('train_scc', epoch_rp_train, step = epoch)
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
         
-        if epoch % 5 == 0:
+        print('Epoch  Train_Loss  Train_SPR  Train RMSE')
+        print("{:5d}  {:10.3f}  {:9.3f}  {:10.3f}".format(
+        epoch, epoch_train_losses, epoch_rp_train, epoch_train_rmse))
+        
+        '''if epoch % 5 == 0:
             model.eval()
             epoch_val_losses = []
+            val_true = []
+            val_pred = []
             with torch.no_grad():
                 for graph_batch in val_loader:
                     graph_batch = graph_batch.to(device)
                     targets = graph_batch['residue'].y.to(torch.float32)
 
-                    targets = graph_batch['residue'].y
-                    #new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
-                    #outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
-                    outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1))
+                    new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
+                    outputs = model(new_embedding.unsqueeze(1)) # for MixBiLSTM_GearNet
+                    #outputs = model(graph_batch['residue'].seq_embedding.unsqueeze(1))
                 
                     val_loss = loss_fn(outputs, targets)
                     epoch_val_losses.append(val_loss.item())
+                    val_true.extend(targets.detach().cpu().numpy())
+                    val_pred.extend(outputs.detach().cpu().numpy())
+
                 val_losses_mean = np.mean(epoch_val_losses)
 
             if data_log:
+                val_scc = spearmanr(val_true, val_pred)[0]
+                val_rmse = np.sqrt(mean_squared_error(val_true, val_pred))
+                val_r2 = r2_score(val_true, val_pred)
                 experiment.log_metric('val_loss', val_losses_mean, step = epoch)
+                experiment.log_metric('val_scc', val_scc, step = epoch)
+                experiment.log_metric('val_rmse', val_rmse, step = epoch)
+                experiment.log_metric('val_r2', val_r2, step = epoch)
 
-        if epoch % 10 == 0:
-            save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')
+        print('Epoch  Train_Loss  Train_SCC    Train_RMSE   Val_SCC    Val_RMSE    Val_R2')
+        print("{:5d}  {:10.3f}  {:9.3f}  {:10.3f}  {:10.3f}  {:10.3f}  {:10.3f}".format(
+        epoch, epoch_train_losses, epoch_rp_train, epoch_train_rmse, val_scc, val_rmse, val_r2))'''
 
-    torch.save(model.state_dict(), f'{result_fpath}.pth')
-    return rmse_train_list, rp_train
+        #if epoch % 10 == 0:
+        #    save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')
+
+    model.eval()
+    complex_labels = []
+    val_preds = []
+    val_targets = []
+    with torch.no_grad():
+        for graph_batch in val_loader: 
+            graph_batch = graph_batch.to(device)
+            targets = graph_batch['residue'].y
+            #new_embedding = torch.cat((graph_batch['residue'].seq_embedding[:,:35],graph_batch['residue'].seq_embedding[:,40:41]), dim=-1)
+            new_embedding = graph_batch['residue'].seq_embedding
+            outputs = model(new_embedding.unsqueeze(1))
+
+            val_preds.extend(outputs.detach().cpu().numpy())
+            val_targets.extend(targets.detach().cpu().numpy())
+            complex_labels.extend(graph_batch['residue'].is_complex.cpu().numpy())
+        
+    val_preds = np.array(val_preds).flatten()
+    val_targets = np.array(val_targets).flatten()
+    complex_labels = np.array(complex_labels)
+    print(val_targets.shape, val_preds.shape, complex_labels.shape)
+
+    single_mask = (complex_labels == 0)
+    complex_mask = (complex_labels == 1)
+    single_rmse = np.sqrt(mean_squared_error(val_preds[single_mask], val_targets[single_mask]))
+    complex_rmse = np.sqrt(mean_squared_error(val_preds[complex_mask], val_targets[complex_mask]))
+    total_rmse = np.sqrt(mean_squared_error(val_preds, val_targets))
+    single_spr = spearmanr(val_preds[single_mask], val_targets[single_mask])[0]
+    complex_spr = spearmanr(val_preds[complex_mask], val_targets[complex_mask])[0]
+    total_spr = spearmanr(val_preds, val_targets)[0]
+    single_r2 = r2_score(val_preds[single_mask], val_targets[single_mask])
+    complex_r2 = r2_score(val_preds[complex_mask], val_targets[complex_mask])
+    total_r2 = r2_score(val_preds, val_targets)
+    print('------------ Model Validation ------------')
+    print('Single RMSE   Single SPR   Single R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(single_rmse, single_spr, single_r2))
+    print('Complex RMSE  Complex SPR  Complex R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(complex_rmse, complex_spr, complex_r2))
+    print('Total RMSE    Total SPR    Total R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(total_rmse, total_spr, total_r2))
+
+    save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {
@@ -124,21 +176,18 @@ def main(training_args):
     apo_input = []
     complex_input = []
     print('data loading')
-    '''for row_id, row in tqdm(hdx_df.iterrows()):
+    for row_id, row in tqdm(hdx_df.iterrows()):
         pdb = row['structure_file'].strip().split('.')[0].upper()
         pepGraph_file = f'{pepGraph_dir}/{pdb}.pt'
         if os.path.isfile(pepGraph_file):
             pepGraph_ensemble = torch.load(pepGraph_file)
-            if pepGraph_ensemble[0].seq_embedding.shape[1] != 98:
-                continue
             if row['complex_state'] == 'single':
-                apo_input.append(pepGraph_ensemble)
+                apo_input.extend(pepGraph_ensemble)
             else:
-                complex_input.append(pepGraph_ensemble)
+                complex_input.extend(pepGraph_ensemble)
         else:
-            continue'''
-    apo_input = torch.load(f'{pepGraph_dir}/train_val_apo.pt')
-    complex_input = torch.load(f'{pepGraph_dir}/train_val_complex.pt')
+            continue
+
     print('length of apo data:', len(apo_input))
     print('length of complex data:', len(complex_input))
 
@@ -149,30 +198,36 @@ def main(training_args):
     #model = MixBiLSTM_GearNet(training_args).to(device)
 
     #BiLSTM
-    training_args['feat_in_dim'] = 1280 # 36 or 98 or 1280
+    training_args['feat_in_dim'] = 56 # 36 or 98 or 1280
     training_args['topo_in_dim'] = 0
 
     ### training ###
-    for i in range(config['cross_validation_num']):
+    '''dataset = apo_input + complex_input
+    type_label = [0]*len(apo_input) + [1]*len(complex_input)
+    kf = StratifiedKFold(n_splits=config['cross_validation_num'], shuffle=True, random_state=42)
+
+    for fold, (train_index, val_index) in enumerate(kf.split(dataset, type_label)):
+        train_set = [dataset[i] for i in train_index]
+        val_set = [dataset[i] for i in val_index]'''
+
+    for fold in range(config['cross_validation_num']):
         model = BiLSTM(training_args).to(device)
         loss_fn = nn.BCELoss()    
         optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
 
         print(f'-----------------------------------------')
-        print(f'-         cross validation {i}            -')
+        print(f'-         cross validation {fold}            -')
         print(f'-----------------------------------------')
 
-        #split based on protein rather than peptide graph
         train_apo, val_apo = train_test_split(apo_input, test_size=0.2, random_state=42)
         train_complex, val_complex = train_test_split(complex_input, test_size=0.2, random_state=42)
-
         print('length of train_apo:', len(train_apo))
         print('length of val_apo:', len(val_apo))
         print('length of train_complex:', len(train_complex))
         print('length of val_complex:', len(val_complex))
 
-        train_set = [item for sublist in train_apo + train_complex for item in sublist] #flatten the list
-        val_set = [item for sublist in val_apo + val_complex for item in sublist]
+        train_set = train_apo + train_complex
+        val_set = val_apo + val_complex
 
         train_loader = DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
@@ -181,23 +236,24 @@ def main(training_args):
         print('length of val_Set:', len(val_set))
 
         # train and save model at checkpoints
-        fname = training_args['file_name']+'_v'+str(i)
+        fname = training_args['file_name']+'_v'+str(fold)
         result_fpath = os.path.join(training_args['result_dir'], fname)
-        rmse_train_list, rp_train = train_model(
+        train_model(
             model, config['num_epochs'], optimizer, train_loader, val_loader, loss_fn, device,
             experiment, result_fpath, training_args['data_log'])
         if training_args['data_log']:
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster2_5A_esm'
+    cluster = 'cluster1_8A_manual'
+    model_name = 'Bilstm56_norescale'
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     config = {
-            'num_epochs':120,
+            'num_epochs':100,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
-            'GNN_type': f'model_Bilstm1280_{cluster}',
+            'GNN_type': f'model_{model_name}_{cluster}',
             'num_GNN_layers': 3,
             'cross_validation_num': 1,
             'num_workers': 4,
@@ -206,21 +262,21 @@ if __name__ == "__main__":
     feat_num = {"sequence": 10, "msa": 30, "physical": 4, "geometric": 12, "heteroatom": 42, 'none': 0}
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
-            'feat_in_dim': 1280 - feat_num["none"], 'topo_in_dim': 42, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'feat_in_dim': 56 - feat_num["none"], 'topo_in_dim': 0, 'num_heads': 8, 'GNN_hidden_dim': 32,
             'GNN_out_dim': 64, 'LSTM_out_dim': 64,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
-            'result_dir': '/home/lwang/models/HDX_LSTM/results/240725_GVP',
-            'file_name': f'model_Bilstm1280_{cluster}',
-            'data_log': True,
+            'result_dir': '/home/lwang/models/HDX_LSTM/results/240918_GVP',
+            'file_name': f'model_{model_name}_{cluster}',
+            'data_log': False,
             'device': device,
             'cluster': cluster
     }
 
-    os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
+    '''os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
     
     experiment = Experiment(
         api_key="yvWYrZuk8AhNnXgThBrgGChY4",
@@ -228,8 +284,8 @@ if __name__ == "__main__":
         workspace="superchrisw"
     )
     if training_args['data_log']:
-        experiment.log_parameters(config)
+        experiment.log_parameters(config)'''
 
-    #experiment = ''
+    experiment = ''
     main(training_args)
     torch.cuda.empty_cache()

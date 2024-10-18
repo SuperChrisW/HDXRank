@@ -37,10 +37,11 @@ def prepare_data(root_dir, embedding_file, pdb, chain,
     if os.path.isfile(embedding_file) == False \
         or os.path.isfile(target_HDX_file) == False:
         print('file not found')
+        print(embedding_file)
+        print(target_HDX_file)
         return False
     
     #db = interface(pdb_file) # pdb2sql interface object 
-    db = None
     input_array, truth_array, start_pos, end_pos, log_t = \
                                         seq_embedding(target_HDX_file, embedding_file, pdb_file, protein, state, chain,
                                                         mismatch_report=False, correction_value=correction_value, filter = ['unique'])
@@ -52,7 +53,7 @@ def base_data(hdx_df, root_dir):
     input_complex = []
     truth_complex = []
     for row_id, row in hdx_df.iterrows():
-        pdb = row['apo_identifier'].strip().split('.')[0]
+        pdb = row['structure_file'].strip().split('.')[0]
         chain = row['chain_identifier']
         protein = row['protein']
         state = row['state']
@@ -75,7 +76,7 @@ def base_data(hdx_df, root_dir):
         if complex_state == 'single':
             input_apo.extend(input_array)
             truth_apo.extend(truth_array)
-        elif complex_state == 'complex':
+        else:
             input_complex.extend(input_array)
             truth_complex.extend(truth_array)
 

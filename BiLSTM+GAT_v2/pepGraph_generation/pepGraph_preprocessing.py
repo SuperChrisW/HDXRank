@@ -8,25 +8,39 @@ from torch_geometric.data import Dataset, Data
 import torch
 from tqdm import tqdm
 
-cluster_index = 1
-protein_model = '8F7A_epi'
+cluster_index = 2
+usage = 'hdock' # 'train' or 'hdock'
+graph_type = 'GearNet' # 'GearNet' or 'GVP'
+embedding_type = 'manual' # 'esm2' or 'manual'
+radius_max = 8
+radius_min = 3
+
+# if usage == 'hdock'
+protein_model = '8A0E_1016'
 df_filter = protein_model[:4]
-N_model = 1000
+N_model = 2000
+#N_model = len(os.listdir(f'/home/lwang/models/HDX_LSTM/data/hdock/backbone_sampling/near_native/{protein_model}'))
 
 if __name__ == '__main__':
-    root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
-    save_dir = f'{root_dir}/graph_ensemble_simpleGVP/cluster{cluster_index}_8A_esm'
+    if usage == 'train':
+        root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
+        save_dir = f'{root_dir}/graph_ensemble_simple{graph_type}/cluster{cluster_index}_{radius_max}A_manual_rescale/'
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        df = pd.read_excel(f'{root_dir}/Extend_summary.xlsx', sheet_name='Sheet1')
+        #df = pd.read_excel(f'{root_dir}/test_data.xlsx', sheet_name='Sheet2')
+        df = df.dropna(subset=['structure_file'])
+        df = df[df['complex_state'] != 'ligand complex']
+    elif usage == 'hdock':
+        root_dir = '/home/lwang/models/HDX_LSTM/data/hdock'
+        save_dir = f'{root_dir}/graph_ensemble_{graph_type}/{protein_model}/cluster{cluster_index}_{radius_max}A_manual_rescale'
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        df = pd.read_excel(f'{root_dir}/test_data_AF.xlsx', sheet_name='hdock_ori') ## 'hdock_ori' or 'hdock_modeling'
+        df = df.dropna(subset=['structure_file'])
+        df = df[df['note'] == df_filter]
+        #df = df[df['note'] == '8F7A_AF']
 
-    #root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_test/hdock'
-    #save_dir = f'{root_dir}/graph_ensemble_simpleGVP/{protein_model}/cluster{cluster_index}_5A_esm'
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    #df = pd.read_excel(f'{root_dir}/test_data_AF.xlsx', sheet_name='hdock_modeling')
-    df = pd.read_excel(f'{root_dir}/merged_data-NAcomplex.xlsx', sheet_name='Sheet1')
-    df = df.dropna(subset=['structure_file'])
-
-    #df = df[df['note'] == df_filter]
     print(df.shape)
 
     apo_identifier = list(df['structure_file'].astype(str).unique())
@@ -91,10 +105,8 @@ if __name__ == '__main__':
     keys = [database_id, protein, state, match_uni, structure_list, chain_identifier, correction, protein_chains, complex_state, feat_identifier]
     print('total number of keys:', len(database_id))
 
-    graph_dataset = pepGraph(keys, root_dir, cluster_index, min_distance = 0.0, max_distance = 8, protein_name = protein_model,
-                             truncation_window_size = None, graph_type='GVP', embedding_type='esm2') 
-    # graph_type: switch between 'GearNet' and 'GVP'
-    # embedding_type: switch between 'esm2' and 'manual'
+    graph_dataset = pepGraph(keys, root_dir, save_dir, cluster_index, min_distance = radius_min, max_distance = radius_max, protein_name = protein_model,
+                             truncation_window_size = None, graph_type=graph_type, embedding_type=embedding_type, usage=usage) 
 
     count = 0
     progress = tqdm(enumerate(graph_dataset), total=len(graph_dataset))
@@ -103,6 +115,8 @@ if __name__ == '__main__':
             continue
         graph_ensemble, label = data
         path = f'{save_dir}/{label}.pt'
+        if len(graph_ensemble) == 0:
+            continue
         torch.save(graph_ensemble, path)
         count += len(graph_ensemble)
     print(count)

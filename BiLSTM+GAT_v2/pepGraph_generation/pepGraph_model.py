@@ -28,7 +28,7 @@ class BiLSTM(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=(3, 3), stride=(1, 1), padding=0)
         self.dropout = nn.Dropout(self.drop_rate)
 
-        self.lstm = nn.LSTM(input_size=output_height*self.out_channels, hidden_size=self.module_out_dim, batch_first=True, bidirectional=True)
+        self.lstm = nn.LSTM(input_size=output_width*self.out_channels, hidden_size=self.module_out_dim, batch_first=True, bidirectional=True) ## output_width or output_height?
         self.fc1 = nn.Linear(self.module_out_dim * 2, self.module_out_dim)  # 16 units total (8 in each direction)
         self.output_fc = nn.Linear(self.module_out_dim, 1)
 
@@ -41,13 +41,12 @@ class BiLSTM(nn.Module):
 
     def forward(self, x):
         x = x.reshape(-1, 1, 30, self.feat_in_dim)
-        #x = x.permute(0, 1, 3, 2)
         ### Convolutional layers
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.pool(x)
 
-        x = x.permute(0, 3, 1, 2)  # Flatten for LSTM
+        x = x.permute(0, 2, 1, 3)  # Flatten for LSTM (0, 3, 1, 2)
         x = x.reshape(-1, x.shape[1], x.shape[2]*x.shape[3])
 
         ### LSTM layers

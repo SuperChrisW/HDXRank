@@ -35,6 +35,7 @@ def output_dssp(PDB_ID, PDB_file, save_dir, dssp_path = dssp_path):
                 for item in list(aa_dssp):
                     out.write(str(item) + "\t")
                 out.write("\n")
+    
     return chain_dssp
 
 
@@ -126,3 +127,30 @@ def get_model_chains(structure):
 
 def parse_hhm(hhm_path):
     pass
+
+
+if __name__ == '__main__':
+    import warnings
+    warnings.filterwarnings('ignore')
+
+    protein_name = '8A0E'
+
+    root_dir = '/home/lwang/models/HDX_LSTM/data/hdock'
+    pdb_dir = os.path.join(root_dir, 'structure', f'{protein_name}')
+    save_dir = os.path.join(root_dir, 'dssp_files', f'{protein_name}')
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    fail_list = []
+    for file in os.listdir(pdb_dir):
+        if file.endswith('.pdb'):
+            pdb_name = file.split('.')[0]
+            pdb_file = os.path.join(pdb_dir, file)
+            try:
+                chain_dssp = output_dssp(pdb_name, pdb_file, save_dir)
+            except Exception as e:
+                print(e)
+                fail_list.append(file)
+                continue
+
+    print(fail_list)

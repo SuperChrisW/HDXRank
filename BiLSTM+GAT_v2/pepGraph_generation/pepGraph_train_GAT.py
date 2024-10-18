@@ -19,6 +19,8 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
+from scipy.stats import spearmanr
 
 
 def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn, device, experiment, result_fpath, data_log = True):
@@ -35,6 +37,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             optimizer.zero_grad()
             graph_batch = graph_batch.to(device)
             targets = graph_batch['residue'].y.to(torch.float32)
+            graph_batch['residue'].node_s['residue'] = torch.cat((graph_batch['residue'].node_s['residue'][:,:35],graph_batch['residue'].node_s['residue'][:,40:41]), dim=-1)
             outputs = model(graph_batch)
 
             train_loss = loss_fn(outputs, targets)
@@ -66,7 +69,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             experiment.log_metric('train_rmse', epoch_train_rmse, step = epoch)
 
         ### validation and early-stopping
-        if epoch % 5 == 0:
+        '''if epoch % 5 == 0:
             model.eval()
             epoch_val_losses = []
             with torch.no_grad():
@@ -83,9 +86,46 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 experiment.log_metric('val_loss', val_losses_mean, step = epoch)
 
         if epoch % 10 == 0:
-            save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')
+            save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')'''
 
-    torch.save(model.state_dict(), f'{result_fpath}.pth')
+    #torch.save(model.state_dict(), f'{result_fpath}.pth')
+    model.eval()
+    complex_labels = []
+    val_preds = []
+    val_targets = []
+    with torch.no_grad():
+        for batch in val_loader: 
+            batch = batch.to(device)
+            targets = batch['residue'].y.to(torch.float32)
+            batch['residue'].node_s['residue'] = torch.cat((batch['residue'].node_s['residue'][:,:35],batch['residue'].node_s['residue'][:,40:41]), dim=-1)
+            outputs = model(batch)
+            val_preds.extend(outputs.cpu().numpy())
+            val_targets.extend(targets.cpu().numpy())
+            complex_labels.extend(batch['residue'].is_complex.cpu().numpy())
+        
+    val_preds = np.array(val_preds)
+    val_targets = np.array(val_targets)
+    complex_labels = np.array(complex_labels)
+    single_mask = (complex_labels == 0)
+    complex_mask = (complex_labels == 1)
+    single_rmse = np.sqrt(mean_squared_error(val_preds[single_mask], val_targets[single_mask]))
+    complex_rmse = np.sqrt(mean_squared_error(val_preds[complex_mask], val_targets[complex_mask]))
+    total_rmse = np.sqrt(mean_squared_error(val_preds, val_targets))
+    single_spr = spearmanr(val_preds[single_mask], val_targets[single_mask])[0]
+    complex_spr = spearmanr(val_preds[complex_mask], val_targets[complex_mask])[0]
+    total_spr = spearmanr(val_preds, val_targets)[0]
+    single_r2 = r2_score(val_preds[single_mask], val_targets[single_mask])
+    complex_r2 = r2_score(val_preds[complex_mask], val_targets[complex_mask])
+    total_r2 = r2_score(val_preds, val_targets)
+    print('------------ Model Validation ------------')
+    print('Single RMSE   Single SPR   Single R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(single_rmse, single_spr, single_r2))
+    print('Complex RMSE  Complex SPR  Complex R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(complex_rmse, complex_spr, complex_r2))
+    print('Total RMSE    Total SPR    Total R2')
+    print("{:10.3f}  {:9.3f}  {:10.3f}".format(total_rmse, total_spr, total_r2))
+
+    save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
     return rmse_train_list, rp_train
 
 def save_checkpoint(model, optimizer, epoch, file_path):
@@ -115,8 +155,17 @@ def main(training_args):
     hdx_df = hdx_df.drop_duplicates(subset=['structure_file'])
 
     print('data loading')
-    apo_input = torch.load(f'{pepGraph_dir}/train_val_apo.pt')
-    complex_input = torch.load(f'{pepGraph_dir}/train_val_complex.pt')
+    for row_id, row in tqdm(hdx_df.iterrows()):
+        pdb = row['structure_file'].strip().split('.')[0].upper()
+        pepGraph_file = f'{pepGraph_dir}/{pdb}.pt'
+        if os.path.isfile(pepGraph_file):
+            pepGraph_ensemble = torch.load(pepGraph_file)
+            if row['complex_state'] == 'single':
+                apo_input.extend(pepGraph_ensemble)
+            else:
+                complex_input.extend(pepGraph_ensemble)
+        else:
+            continue
     print('length of apo data:', len(apo_input))
     print('length of complex data:', len(complex_input))
 
@@ -140,8 +189,8 @@ def main(training_args):
         print('length of train_complex:', len(train_complex))
         print('length of val_complex:', len(val_complex))
 
-        train_set = [item for sublist in train_apo + train_complex for item in sublist] #flatten the list
-        val_set = [item for sublist in val_apo + val_complex for item in sublist]
+        train_set = train_apo + train_complex
+        val_set = val_apo + val_complex
 
         train_loader = DataLoader(train_set, batch_size = config['batch_size'], shuffle=True, num_workers=config['num_workers'])
         val_loader =  DataLoader(val_set, batch_size = config['batch_size'], shuffle=False, num_workers=config['num_workers'])
@@ -158,11 +207,11 @@ def main(training_args):
             log_model(experiment, model=model, model_name = 'PEP-HDX')
 
 if __name__ == "__main__":
-    cluster = 'cluster1_5A_esm'
-    model_name = 'GAT1280'
+    cluster = 'cluster1_8A_manual_rescale'
+    model_name = 'GAT36'
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     config = {
-            'num_epochs':120,
+            'num_epochs':100,
             'batch_size': 16,
             'learning_rate': 0.001,
             'weight_decay': 5e-4,
@@ -173,21 +222,21 @@ if __name__ == "__main__":
     }
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
-            'feat_in_dim': 1280, 'topo_in_dim': 0, 'num_heads': 8, 'GNN_hidden_dim': 32,
+            'feat_in_dim': 36, 'topo_in_dim': 0, 'num_heads': 8, 'GNN_hidden_dim': 32,
             'GNN_out_dim': 16, 'LSTM_out_dim': 16,
 
             'final_hidden_dim': 16,
 
             'drop_out': 0.5, 'num_GNN_layers': config['num_GNN_layers'], 'GNN_type': config['GNN_type'],
             'graph_hop': 'hop1', 'batch_size': config['batch_size'],
-            'result_dir': '/home/lwang/models/HDX_LSTM/results/240725_GVP',
+            'result_dir': '/home/lwang/models/HDX_LSTM/results/240918_GVP',
             'file_name': f'model_{model_name}_{cluster}_radiusEdge+self',
-            'data_log': True,
+            'data_log': False,
             'device': device,
             'cluster': cluster
     }
 
-    os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
+    '''os.environ["COMET_GIT_DIRECTORY"] = "/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction"  
 
     experiment = Experiment(
         api_key="yvWYrZuk8AhNnXgThBrgGChY4",
@@ -196,8 +245,8 @@ if __name__ == "__main__":
     )
    
     if training_args['data_log']:
-        experiment.log_parameters(config)
+        experiment.log_parameters(config)'''
 
-    #experiment = ''
+    experiment = ''
     main(training_args)
     torch.cuda.empty_cache()

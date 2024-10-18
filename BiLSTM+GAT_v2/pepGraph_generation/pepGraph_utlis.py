@@ -195,7 +195,7 @@ def load_embedding(fpath, feat_rescale = True):
 
     return embedding_dict, embedding_matrix, embedding_seq
 
-def seq_embedding(HDX_dataframe, vector_file, pdb_file, protein, state, chain,
+def seq_embedding(HDX_dataframe, vector_file, protein, state,
                     mismatch_report = True, correction_value = 0, filter = []):
     """
     Generate the input array and truth array for the given HDX data file and embedding file
@@ -212,11 +212,13 @@ def seq_embedding(HDX_dataframe, vector_file, pdb_file, protein, state, chain,
     df = datafile[datafile['sequence'].str.len() < max_len] # sequence column
     df = df.sort_values(by=['start', 'end'], ascending=[True, True])
 
-    # keep only the contact residues between chains
-    # db -> pdb2sql database
-
     if 'unique' in filter:
         df = df.drop_duplicates(subset=['start', 'end'], keep='last')
+    elif 'AIHDX' in filter:
+        df = df[(df['log_t']>3.4) & (df['log_t']<3.62)]
+        if df.shape[0] == 0:
+            print('No peptides found in the given range')
+            return None
 
     start_pos = [x + correction_value for x in df['start'].astype(int).tolist()]
     end_pos = [x + correction_value for x in df['end'].astype(int).tolist()]
@@ -263,7 +265,7 @@ def seq_embedding(HDX_dataframe, vector_file, pdb_file, protein, state, chain,
     non_empty_mask = ~(input_array == 0).all(axis=(1, 2))
     output_array = input_array[non_empty_mask, :, :] 
 
-    truth = df["%d"].to_numpy()
+    truth = df["RFU"].to_numpy()
     truth = truth[non_empty_mask]
     return output_array, truth, start_pos, end_pos, log_t
 
@@ -345,10 +347,12 @@ def load_protein(hhm_file, pdb_file, chain_id):
             res_seq.append(chemdata.three_to_one[res_name])
         else:
             print(f'Non-standard AA found: {res_name}')
-
-        N_coord = list(res['N'].get_coord())
-        Ca_coord = list(res['CA'].get_coord())
-        C_coord = list(res['C'].get_coord())
+        try:
+            N_coord = list(res['N'].get_coord() if 'N' in res else [0, 0, 0])
+            Ca_coord = list(res['CA'].get_coord() if 'CA' in res else [0, 0, 0])
+            C_coord = list(res['C'].get_coord() if 'C' in res else [0, 0, 0])
+        except KeyError:
+            print(f'KeyError at residue {res_id} {res_name} in chain {chain_id}')
         res_coord = [N_coord, Ca_coord, C_coord]
         residue_coord.append(res_coord)
         residue_data[res_id] = {
