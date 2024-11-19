@@ -1,7 +1,0 @@
-*.make
-assignAtomTypes
-measureDistanceTraveled
-measureRMSF
-matchState1ToState2
-.*
-obj
