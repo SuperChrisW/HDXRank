@@ -136,7 +136,7 @@ class RawInputData:
     def construct_embedding(self):
         # construct embedding
         embedding = torch.cat((self.msa, self.res_HDMD, self.res_polarity, self.res_charge, self.SASA, self.hse, self.dihedrals, self.orientations), dim=1)
-        ########### Dims:          30            5              4                   1            1         3            6                4          = 54 ###########
+        ########### Dims:          30            5              4                   1            1         3            6                6          = 56 ###########
         return embedding
     
     def merge(self, data):
@@ -371,7 +371,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
     start_time = end_time
 
     # physical-based features
-    hse_dict = get_hse(model, chain_id)
+    #hse_dict = get_hse(model, chain_id)
     SASA = biotite_SASA(pdb_file, chain_id)[:max_len]
     end_time = time.time()
     print('physical feat. done', end_time - start_time)
@@ -402,10 +402,10 @@ def load_protein(hhm_file, pdb_file, chain_id):
         raise ValueError('Sequence mismatch between HMM and DSSP')
 
     corrected_hse_mtx = np.zeros((max_len, 3))
-    for i, res_j in enumerate(residue_data.keys()):
+    '''for i, res_j in enumerate(residue_data.keys()):
         res_j = str(res_j)
         if (chain_id, res_j) in hse_dict.keys():
-            corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])
+            corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])'''
 
     print('protein length:', len(residue_data.keys()))
     print('SASA length:', SASA.shape)

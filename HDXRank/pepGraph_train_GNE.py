@@ -54,6 +54,8 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 node_feat = torch.cat([graph_batch.residue_feature[:,:35].float(), graph_batch.residue_feature[:,40:41].float()], dim=1) # same as AI-HDX
             elif rm_feat == 'esm2':
                 node_feat = graph_batch.residue_feature.float()
+            elif rm_feat == 'hse':
+                node_feat = torch.cat([graph_batch.residue_feature[:,:41].float(), graph_batch.residue_feature[:,44:].float()], dim=1)
             else:
                 raise ValueError('Invalid feature type to remove')
             outputs = model(graph_batch, node_feat) # for GearNet and GearNet-Edge
@@ -131,6 +133,8 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
                 node_feat = graph_batch.residue_feature.float()
             elif rm_feat == 'esm2':
                 node_feat = graph_batch.residue_feature.float()
+            elif rm_feat == 'hse':
+                node_feat = torch.cat([graph_batch.residue_feature[:,:41].float(), graph_batch.residue_feature[:,44:].float()], dim=1)
             #node_feat = torch.cat([graph_batch.residue_feature[:,:35].float(), graph_batch.residue_feature[:,40:41].float()], dim=1) # same as AI-HDX
             outputs = model(graph_batch, node_feat)
 
@@ -160,7 +164,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
     print('Total RMSE    Total SPR    Total R2')
     print("{:10.3f}  {:9.3f}  {:10.3f}".format(total_rmse, total_spr, total_r2))
 
-    save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
+    #save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
     return rmse_train_list, rp_train
 
 def save_checkpoint(model, optimizer, epoch, file_path):
@@ -240,7 +244,7 @@ def main(training_args):
 
         train_set = train_apo + train_complex
         val_set = val_apo + val_complex
-        train_set = data.Protein.pack(train_set)
+        train_set = data.Protein.pack(train_set+val_set)
         val_set = data.Protein.pack(val_set)
 
         #train_set = data.Protein.pack([item for sublist in train_apo + train_complex for item in sublist])
@@ -291,7 +295,8 @@ if __name__ == "__main__":
             'num_workers': 4,
     }
 
-    feat_num = {"sequence": 10, "msa": 30, "physical": 4, "geometric": 12, "heteroatom": 42, 'none': 0, '36feat': 62, 'esm2': -264}
+    feat_num = {"sequence": 10, "msa": 30, "physical": 4, "geometric": 12, "heteroatom": 42, 'none': 0, '36feat': 62, 'esm2': -264,
+                'hse': 3}
 
     training_args = {'num_hidden_channels': 10, 'num_out_channels': 20, 
             'feat_in_dim': 56 - feat_num[args.rm_feat], 'topo_in_dim': 0, 'num_heads': 8, 'GNN_hidden_dim': 32,

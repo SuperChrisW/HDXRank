@@ -1,7 +1,10 @@
 """
 2024/3/28
 Author: WANG Liyao
-Usage: Take the HHBlits output hhm format, and encode the protein sequence
+Note: 
+Take the HHBlits output hhm format, PDB structure as input to encode peptide sequence and structure information into embedding.
+The Heteroatoms (NA and SM) encoding are also supported and merged with protein sequence,
+but it is not used in the current HDXRank model.
 """
 import os
 import torch
@@ -46,15 +49,12 @@ def merge_inputs(inputs_list):
             running_input = running_input.merge(inputs_list[i])
         return running_input
 
-def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, protein_chain, NA_chain = [], SM_chain = []):
+def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, protein_chain_hhms, NA_chain = [], SM_chain = []):
     print('processing:', pdb_fname)
-    if os.path.isfile(f'{save_dir}/{pdb_fname}.pt'):
-        print('file exist')
-        return None
-    if len(protein_chain) == 0 and type(protein_chain) is not list:
+    protein_chain = list(protein_chain_hhms.keys())
+    if len(protein_chain) == 0:
         raise ValueError('protein_chain is empty')
 
-    parser = PDB.PDBParser()
     pdb_file = f'{structure_dir}/{pdb_fname}.pdb'
     if not os.path.isfile(pdb_file):
         print('file not exist:', pdb_file)
@@ -72,15 +72,13 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
 
     for chain in chains:
         chain_id = chain.get_id()
-        hhm_file = os.path.join(hhm_dir, f'{hhm_fname}_{chain_id}.hhm') ## FIXME: change to the correct path
-        print(hhm_file)
+        hhm_file = os.path.join(hhm_dir, f'{protein_chain_hhms[chain_id]}_{chain_id}.hhm')
         if chain_id in protein_chain:
             if os.path.isfile(hhm_file) and os.path.isfile(pdb_file):
-                #print('loading:', hhm_file, pdb_file)
                 protein_inputs.append(load_protein(hhm_file, pdb_file, chain_id))
             else:
-                fail_list.append((pdb_fname, chain_id))
-                raise ValueError('file not exist', pdb_fname, chain_id)
+                fail_list.append((pdb_file, chain_id))
+                raise ValueError('file not exist', hhm_file, pdb_file, chain_id)
         elif chain_id in NA_chain:
             NA_inputs.append(load_nucleic_acid(pdb_file, chain_id))
         elif chain_id in SM_chain:
@@ -88,13 +86,14 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
 
     ### merging protein, NA, and SM ###
     embedding = [protein.construct_embedding() for protein in protein_inputs]
-    embed_mtx = torch.cat(embedding, dim=0) #FIXME: not include index and residue type
+    embed_mtx = torch.cat(embedding, dim=0)
 
     ### find contact residues of NA and SM ###
     chain_list = [chain for chain in structure.get_chains() if chain.id in protein_chain]
     res_list = Selection.unfold_entities(chain_list, 'R')
 
-    res_idx_list = []
+    ### block the following code as the Heteroatom encoding is not used in the current HDXRank model ###
+    '''res_idx_list = []
     for res in res_list:
         name = res.get_resname()
         res_idx_list.append(chemdata.aa2num[name] if name in chemdata.aa2num else 20)
@@ -104,7 +103,6 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
     if len(NA_inputs) != 0 or len(SM_inputs) != 0:
         for inputs in [NA_inputs, SM_inputs]:
             merged_HETinput = merge_inputs(inputs)
-            #print('merged_HETinput:', merged_HETinput, type(merged_HETinput))
             if len(merged_HETinput.seq_data.keys()) == 0:
                 continue
             contact_mtx = find_contact_res(merged_HETinput, res_list, cutoff = 5.0)  # [#res, #entity of NA/SM] where elements are type encoding
@@ -121,7 +119,7 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
     encoded_tensor = torch.log(encoded_tensor + 1) # apply log(e) to elements
 
     protein_embedding = torch.cat((embed_mtx, encoded_tensor), dim=1)
-    print('protein_embedding:', protein_embedding.shape)
+    print('protein_embedding:', protein_embedding.shape)'''
 
     #save to file
     res_idx = [res.id[1] for res in res_list]
@@ -131,7 +129,7 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
         'res_idx': res_idx,
         'res_name': res_name,
         'chain_label': chain_label,
-        'embedding': protein_embedding
+        'embedding': embed_mtx
     }
     save_file = os.path.join(save_dir, f'{pdb_fname}.pt')
     torch.save(data_to_save, save_file)
@@ -139,56 +137,76 @@ def generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, hhm_fname, p
 if __name__ == "__main__":
     ## generate embedding ##
     warnings.filterwarnings("ignore")
+
+    ## covid spike protein
     root_dir = '/home/lwang/models/HDX_LSTM/data/COVID_SPIKE/'
-    protein_name = 'Delta_fold_vh16_vl106_seed2_model_0'
-    N_model = 10
+    spike_protein = 'Delta'
+    proteins = [f'fold_vh16_vl106_seed2_model_0',
+                f'fold_vh16_vl106_seed4_model_0',
+                f'fold_vh16_vl106_seed4_model_1',
+                f'fold_vh16_vl106_seed4_model_2',
+                f'fold_vh16_vl106_seed5_model_2']
+    proteins = [f'{spike_protein}_{protein}' for protein in proteins]
 
-    hhm_dir = os.path.join(root_dir, 'hhm_files')
-    save_dir = os.path.join(root_dir, 'embedding_files')
-    structure_dir = os.path.join(root_dir, 'structure', protein_name)
-    if not os.path.isdir(save_dir):
-        os.mkdir(save_dir)
-
-    df = pd.read_excel(f'{root_dir}/test_data_AF.xlsx', sheet_name='hdock') ## 'hdock_ori' or 'hdock_modeling'
-    df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
-    df = df[df['note'] == protein_name[:4]]
-    fail_list = []
-    chemdata = ChemData()
-
-    for id, row in df.iterrows():
-        pdb_fname = str(row['structure_file']).upper().split('.')[0]
-        hhm_fname = str(row['note'])
-
-        protein_chain = row['protein_chain'].split(',')
-        NA_chain = row['NA_chain'].split(',') if not pd.isnull(row['NA_chain']) else []
-        SM_chain = row['SM_chain'].split(',') if not pd.isnull(row['SM_chain']) else []
-
+    for protein_name in proteins:
+        N_model = 1000
+        hhm_dir = os.path.join(root_dir, 'hhm_files')
+        save_dir = os.path.join(root_dir, 'embedding_files')
         structure_dir = os.path.join(root_dir, 'structure', protein_name)
-        save_dir = os.path.join(root_dir, 'embedding_files', protein_name)
+        df = pd.read_excel(f'{root_dir}/COVID_{spike_protein}.xlsx', sheet_name='Sheet1')
+        df = df[df['note'] == protein_name]
+        df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
+
+        # training data
+        '''root_dir = '/home/lwang/models/HDX_LSTM/data/Latest_set'
+        hhm_dir = os.path.join(root_dir, 'hhm_files')
+        save_dir = os.path.join(root_dir, 'embedding_files')
+        structure_dir = os.path.join(root_dir, 'structure')
+        df = pd.read_excel(f'{root_dir}/merged_data-NAcomplex.xlsx', sheet_name='Sheet1')
+        df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])'''
 
         if not os.path.isdir(save_dir):
             os.mkdir(save_dir)
-        if os.path.isfile(f'{save_dir}/{pdb_fname}.pt'):
-            print('file exist')
-            continue
+        fail_list = []
+        chemdata = ChemData()
 
-        if pdb_fname.split(":")[0] != 'MODEL':
-            if row['complex_state'] == 'protein complex':
+        for id, row in df.iterrows():
+            pdb_fname = str(row['structure_file']).upper().split('.')[0]
+
+            protein_chain = row['protein_chain'].split(',')
+            NA_chain = row['NA_chain'].split(',') if not pd.isnull(row['NA_chain']) else []
+            SM_chain = row['SM_chain'].split(',') if not pd.isnull(row['SM_chain']) else []
+
+            structure_dir = os.path.join(root_dir, 'structure', protein_name)
+            save_dir = os.path.join(root_dir, 'embedding_files', protein_name)
+
+            #structure_dir = os.path.join(root_dir, 'structure')
+            #save_dir = os.path.join(root_dir, 'embedding_files')
+            protein_chain_hhms = {}
+
+            if not os.path.isdir(save_dir):
+                os.mkdir(save_dir)
+            if os.path.isfile(f'{save_dir}/{pdb_fname}.pt'):
+                print('file exist')
                 continue
-            generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname, pdb_fname, 
-                                protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)
-        else:
-            '''
-            for complex structure with chain A and B,
-            there should have a hhm file of '{hhm_fname}_A.hhm' and '{hhm_fname}_B.hhm' which are copied from the apo structure hhm file
-            '''
-            hhm_file = row['structure_file'].split(':')[1:]
-            hhm_fname = [f'{file}_{chain}' for file in hhm_file]
 
+            if pdb_fname.split(":")[0] != 'MODEL':
+                if row['complex_state'] == 'protein complex':
+                    continue
+                for i, chain in enumerate(protein_chain):
+                    protein_chain_hhms[chain] = pdb_fname
+                generate_embedding(structure_dir, hhm_dir, save_dir, pdb_fname,
+                                    protein_chain_hhms = protein_chain_hhms, NA_chain = NA_chain, SM_chain = SM_chain)
+            else:
+                #hhm_fname should be a list of hhm file names, corresponding to protein_chain
+                model_list = [f'MODEL_{i}_REVISED' for i in range(1, N_model+1)]
+                hhm_fname = row['structure_file'].split(':')[1:]
+                if len(hhm_fname) != len(protein_chain):
+                    raise ValueError('hhm_fname and protein_chain do not match')
+                for i, chain in enumerate(protein_chain):
+                    protein_chain_hhms[chain] = hhm_fname[i].upper()
 
-            
-            model_list = [f'MODEL_{i}_REVISED' for i in range(1, N_model+1)]
-            for model in model_list:
-                generate_embedding(structure_dir, hhm_dir, save_dir, model, hhm_fname, 
-                                    protein_chain = protein_chain, NA_chain = NA_chain, SM_chain = SM_chain)
+                for model in model_list:
+                    generate_embedding(structure_dir, hhm_dir, save_dir, model,
+                                        protein_chain_hhms = protein_chain_hhms, NA_chain = NA_chain, SM_chain = SM_chain)
 
