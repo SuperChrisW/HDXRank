@@ -124,4 +124,3 @@ class GearNet(nn.Module):
 
         return nn.functional.sigmoid(pred)
         # add sigmoid for BCE loss calculation
-        # return graph_feature for latent space visualization

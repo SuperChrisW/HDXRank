@@ -108,8 +108,8 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
             if data_log:
                 experiment.log_metric('val_loss', val_losses_mean, step = epoch)'''
 
-        #if epoch % 10 == 0:
-        #    save_checkpoint(model, optimizer, epoch, f'{result_fpath}_epoch{epoch}.pth')
+        if epoch+1 in [60, 70, 80, 90]:
+            save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
 
     model.eval()
     complex_labels = []
@@ -164,7 +164,7 @@ def train_model(model, num_epochs, optimizer, train_loader, val_loader, loss_fn,
     print('Total RMSE    Total SPR    Total R2')
     print("{:10.3f}  {:9.3f}  {:10.3f}".format(total_rmse, total_spr, total_r2))
 
-    #save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
+    save_checkpoint(model, optimizer, num_epochs, f'{result_fpath}_epoch{epoch}.pth')
     return rmse_train_list, rp_train
 
 def save_checkpoint(model, optimizer, epoch, file_path):

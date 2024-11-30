@@ -457,49 +457,31 @@ def create_graph_(pdb_fpath, embedding_dir, fasta_dir, feat_identifier, protein_
     print(G)
     return G
 
-def load_pep(HDX_fpath, chain_identifier, correction, protein, state, protein_chains, cluster_index, max_len =30, truncation_window_size = None):
-    if truncation_window_size is None:
-        HDX_df = pd.read_excel(HDX_fpath, sheet_name='Sheet1')
-        ### -------- filter HDX table ------ ####
-        HDX_df['state'] = HDX_df['state'].str.replace(' ', '')
-        HDX_df['protein'] = HDX_df['protein'].str.replace(' ', '')
-        protein = [p.replace(' ', '').strip() for p in protein]
-        state = [s.replace(' ', '').strip() for s in state]
+def load_pep(HDX_fpath, chain_identifier, correction, protein, state, protein_chains, cluster_index, max_len =30, pep_range = None):
+    '''
+    pep_range: list of tuples, each tuple contains the start and end position of the peptide. [(a,b), (c,d), ...]
+    '''
+    HDX_df = pd.read_excel(HDX_fpath, sheet_name='Sheet1')
+    ### -------- filter HDX table ------ ####
+    HDX_df['state'] = HDX_df['state'].str.replace(' ', '')
+    HDX_df['protein'] = HDX_df['protein'].str.replace(' ', '')
+    protein = [p.replace(' ', '').strip() for p in protein]
+    state = [s.replace(' ', '').strip() for s in state]
 
-        # filter the HDX table
-        HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
-        HDX_df = HDX_df[HDX_df['sequence'].str.len() < max_len]
-        HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
-        #HDX_df = HDX_df.reset_index(drop=True)
-        print('after filtering:', HDX_df.shape)
-        
-        if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction, 
-                            protein_chains, cluster_index): # read HDX table file
-            return None
-    else:
-        npep = 0
-        stride = 1
-        chain_batch = []
-        res_name = []
-        res_id = []
-        for residue in res._registry:
-            res_id.append(residue.i)
-            res_name.append(residue.name)
-            chain_batch.append(residue.chain_id)
-        res_id, res_name, chain_batch = np.array(res_id), np.array(res_name), np.array(chain_batch)
-
-        for chain_label in set(chain_batch):
-            mask = (chain_batch == chain_label)
-            chain_res_id = res_id[mask]
-            chain_res_name = res_name[mask]
-            for i in range(0, len(chain_res_id) - truncation_window_size, stride):
-                seq = ''.join([protein_letters_3to1[res] for res in chain_res_name[i:i+truncation_window_size]])
-                start_pos, end_pos = chain_res_id[i], chain_res_id[i+truncation_window_size-1]
-                hdx_value = -1
-                peptide = pep(npep, seq, chain_label, start_pos, end_pos, hdx_value)
-                for j in range(len(seq)):
-                    peptide.clusters.append(chain_res_id[i+j])
-                npep += 1
+    # filter the HDX table
+    HDX_df = HDX_df[(HDX_df['state'].isin(state)) & (HDX_df['protein'].isin(protein))]
+    HDX_df = HDX_df[HDX_df['sequence'].str.len() < max_len]
+    if pep_range: #providing specific range (start, end) to filter the peptides
+        filtered_df = pd.DataFrame()
+        for start, end in pep_range:
+            filtered_df = pd.concat([filtered_df, HDX_df[(HDX_df['start'] >= start) & (HDX_df['end'] <= end)]])
+        HDX_df = filtered_df.drop_duplicates().reset_index(drop=True)
+    HDX_df = HDX_df.sort_values(by=['start', 'end'], ascending=[True, True]) # mixed states will be separated in read_HDX_table func.
+    print('after filtering:', HDX_df.shape)
+    
+    if not read_HDX_table(HDX_df, protein, state, chain_identifier, correction, 
+                        protein_chains, cluster_index): # read HDX table file
+        return None
     print('read in pep numbers:', len(pep._registry))
 
 def find_neigbhors(G, nodes, hop=1):
@@ -620,9 +602,9 @@ class modified_GVPdataset(ProteinGraphDataset):
         return protein
 
 class pepGraph(Dataset):
-    def __init__(self, keys, root_dir, save_dir, cluster_index, max_len=30, min_distance = 3.0 , max_distance = 8.0,
-                 protein_name = None, truncation_window_size = None, graph_type = 'GearNet', embedding_type = 'esm2', usage = 'train'):
-        self.keys = keys
+    def __init__(self, tasks, root_dir, save_dir, cluster_index, max_len=30, min_distance = 3.0 , max_distance = 8.0,
+                 protein_name = None, graph_type = 'GearNet', embedding_type = 'esm2', usage = 'train'):
+        self.keys = tasks
         self.root_dir = root_dir
         self.cluster_index = cluster_index
         self.graph_type = graph_type
@@ -633,13 +615,13 @@ class pepGraph(Dataset):
 
         if usage == 'train':
             self.pdb_dir = os.path.join(root_dir, 'structure')
-        elif usage == 'hdock':
+        elif usage == 'hdock' or usage == 'covid':
             self.pdb_dir = os.path.join(root_dir, 'structure', f'{protein_name}')
 
         if self.embedding_type == 'manual':
             if usage == 'train':
                 self.embedding_dir = os.path.join(root_dir, 'embedding_files')
-            elif usage == 'hdock':
+            elif usage == 'hdock' or usage == 'covid':
                 self.embedding_dir = os.path.join(root_dir, 'embedding_files', protein_name) #maunual embedding
             else:
                 raise ValueError(f'Unsupported usage: {usage}')
@@ -651,8 +633,7 @@ class pepGraph(Dataset):
         self.max_len = max_len
         self.min_distance = min_distance
         self.max_distance = max_distance
-        self.truncation_window_size = truncation_window_size
-        self.complex_state_dict = {'single':0, 'protein complex':1, 'ligand complex':2, 'dna complex':3, 'rna complex': 4}
+        self.complex_state_dict = {'apo':0, 'single':0, 'protein complex':1, 'ligand complex':2, 'dna complex':3, 'rna complex': 4}
 
     def __len__(self):
         return len(self.keys)
@@ -667,21 +648,21 @@ class pepGraph(Dataset):
         pep._registry = []
 
         database_id = self.keys[0][index].strip()
-        apo_identifier = self.keys[4][index].strip().split('.')[0].upper()
+        apo_identifier = self.keys[3][index].strip().split('.')[0].upper()
 
         protein = self.keys[1][index]
         state = self.keys[2][index]
-        #match_uni = self.keys[3][index]
-        chain_identifier = self.keys[5][index]
-        correction = self.keys[6][index]
-        protein_chains = self.keys[7][index]
+        chain_identifier = self.keys[4][index]
+        correction = self.keys[5][index]
+        protein_chains = self.keys[6][index]
         if isinstance(protein_chains, str):
             protein_chains = protein_chains.split(',')
         elif isinstance(protein_chains, list):
             protein_chains = [chains.split(',') for chains in protein_chains]
 
-        complex_state = self.keys[8][index]
-        feat_identifier = self.keys[9][index] #list or str
+        complex_state = self.keys[7][index]
+        feat_identifier = self.keys[8][index] #list or str
+
 
         print("processing",database_id, apo_identifier)
         if os.path.isfile(os.path.join(self.save_dir, f'{apo_identifier}.pt')):
@@ -691,7 +672,7 @@ class pepGraph(Dataset):
         pdb_fpath = os.path.join(self.pdb_dir, f'{apo_identifier}.pdb')
         target_HDX_fpath = os.path.join(self.hdx_dir, f'{database_id}_revised.xlsx')
         
-        if not os.path.isfile(target_HDX_fpath) and self.truncation_window_size is None:
+        if not os.path.isfile(target_HDX_fpath):
             print("cannot find HDX table: ", target_HDX_fpath)
             return None 
         if not os.path.isfile(pdb_fpath):
@@ -699,6 +680,7 @@ class pepGraph(Dataset):
             return None
 
         # residue graph generation #
+        print("creating graph")
         if self.embedding_type == 'manual':
             G = create_graph_(pdb_fpath, self.embedding_dir, self.fasta_dir, apo_identifier, protein_chains, embedding_type = self.embedding_type, 
                             max_distance = self.max_distance, min_distance = self.min_distance)
@@ -722,7 +704,7 @@ class pepGraph(Dataset):
             raise ValueError(f'Unsupported graph type: {self.graph_type}')
 
         load_pep(target_HDX_fpath, chain_identifier, correction, protein, state, G.graph['protein_chains'], 
-                 self.cluster_index, max_len = self.max_len, truncation_window_size = self.truncation_window_size)
+                 self.cluster_index, max_len = self.max_len, pep_range = [(1,620)])
 
         graph_ensemble = split_graph(G, max_len = self.max_len, complex_state_id = self.complex_state_dict[complex_state], graph_type = self.graph_type)
 

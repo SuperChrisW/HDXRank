@@ -37,7 +37,10 @@ def test_model(model, test_loader, device, graph_type = 'GearNetEdge'):
                 if graph_type == 'GearNet':
                     targets = graph_batch.y
                     #node_feat = graph_batch.residue_feature[:,:56].float() # remove heteroatom encoding
-                    node_feat = graph_batch.residue_feature.float()
+                    #remove hse encoding
+                    node_feat = torch.cat([graph_batch.residue_feature[:,:41].float(), graph_batch.residue_feature[:,44:].float()], dim=1)
+
+                    #node_feat = graph_batch.residue_feature.float()
                     outputs = model(graph_batch, node_feat)
                     range_list.extend(graph_batch.range.cpu().detach().numpy())
                     chain_list.extend(graph_batch.chain.cpu().detach().numpy())
@@ -133,9 +136,9 @@ def plot_result(y_true, y_pred, range_list, batch_list, chain_list, args):
     plt.grid(True) 
     plt.savefig(f'{save_dir}/{date}_{model_name}_{version}_{dataset}.png')  
 
-def run_prediction(model, hdx_df, merged_config, pepGraph_dir, device):
+def run_prediction(model, merged_config, pepGraph_dir, device):
     ##################################### data preparation #####################################
-    test_loader = load_data(hdx_df, pepGraph_dir, merged_config)
+    test_loader = load_data(pepGraph_dir, merged_config)
     #try:
     y_true, y_pred, range_list, chain_list = test_model(model, test_loader, device, merged_config['graph_type'])
     return y_true, y_pred, range_list, chain_list
@@ -150,7 +153,7 @@ def load_model(model_path, config, accelerator):
     unwrapped_model.load_state_dict(torch.load(path_to_checkpoint))
     return unwrapped_model
 
-def load_data(df, pepGraph_dir, merged_config):
+def load_data(pepGraph_dir, merged_config):
     input_data = []
     load_proteins = merged_config['load_proteins'] if isinstance(merged_config['load_proteins'], list) else [merged_config['load_proteins']]
     for protein in load_proteins:
@@ -174,10 +177,7 @@ def load_data(df, pepGraph_dir, merged_config):
 
 def main(save_args):
     ##################################### initial setting #####################################
-    root_dir = "/home/lwang/models/HDX_LSTM/data/hdock"
-    HDX_summary_file = f'{root_dir}/hdock.xlsx'
-    hdx_df = pd.read_excel(HDX_summary_file, sheet_name='Sheet1')
-    hdx_df = hdx_df.dropna(subset=['structure_file'])
+    root_dir = "/home/lwang/models/HDX_LSTM/data/COVID_SPIKE"
     #pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_{save_args['graph_type']}", f"{save_args['protein_name']}", f"{save_args['cluster']}")
     pepGraph_dir = os.path.join(root_dir, f"graph_ensemble_GearNet", f"{save_args['protein_name']}", f"{save_args['cluster']}")
     model_path = save_args['model_path']
@@ -187,7 +187,7 @@ def main(save_args):
     config = {
     #training setting
     'num_epochs': 8, # epochs for finetuning
-    'batch_size': 16,
+    'batch_size': 128,
     'learning_rate': 0.001,
     'weight_decay': 5e-4,
     'GNN_type': 'GearNet',
@@ -199,7 +199,7 @@ def main(save_args):
     #model setting
     'num_hidden_channels': 10,
     'num_out_channels': 20,
-    'feat_in_dim': 56, #bilstm 36: 56-62, GVP 1280: 1280, GearNet: 56
+    'feat_in_dim': 53, #bilstm 36: 56-62, GVP 1280: 1280, GearNet: 56 , GearNet-hse: 53
     'topo_in_dim': 0,
     'num_heads': 8,
     'GNN_hidden_dim': 32,
@@ -256,7 +256,7 @@ def main(save_args):
     for protein in merged_config['prediction_protein']:
         print(f'Predicting {protein}...')
         merged_config['load_proteins'] = protein
-        y_true, y_pred, range_, chain = run_prediction(model, hdx_df, merged_config, pepGraph_dir, device)
+        y_true, y_pred, range_, chain = run_prediction(model, merged_config, pepGraph_dir, device)
         if y_true is None:
             print(f'Error in predicting {protein}...')
             continue
@@ -297,55 +297,66 @@ def main(save_args):
     print('results saved to csv:', results_csv_path)
 
 if __name__ == "__main__":
-    #protein_name  = 'Hdock_DeltaRBD+V16noext'
-    #protein_list = [f'{protein_name}_{i}_revised' for i in range(1, 101)]
-
     cluster = 'cluster1_8A_manual_rescale'
-    protein_name = '8F7A_ori'
+    spike_protein = 'Delta'
+    proteins = [f'fold_vh16_vl106_seed2_model_0',
+                f'fold_vh16_vl106_seed4_model_0',
+                f'fold_vh16_vl106_seed4_model_1',
+                f'fold_vh16_vl106_seed4_model_2',
+                f'fold_vh16_vl106_seed5_model_2']
+    proteins = [f'{spike_protein}_{protein}' for protein in proteins]
     graph_type = 'GearNet'
-    epoch = [60, 70, 80]
+    epoch = [60, 70, 80, 90, 100]
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/hdock/graph_ensemble_GearNet/{protein_name}/{cluster}')
-    protein_list = [data.split('.')[0] for data in data_list]
+    for protein in proteins:
+        data_list = os.listdir(f'/home/lwang/models/HDX_LSTM/data/COVID_SPIKE/graph_ensemble_GearNet/{protein}/{cluster}')
+        protein_list = [data.split('.')[0] for data in data_list]
 
-    print(len(protein_list))
-    save_args = {
-        #save setting
-        'plot_title': 'test_set',
-        'date': '240730',
-        'model_name': 'GearNet',
-        'version': 'v1',
-        'result_dir': f'/home/lwang/models/HDX_LSTM/data/hdock/prediction/',
-        'prediction_csv': None,
-        'cluster':cluster,
-        'protein_name': protein_name,
-        'graph_type': graph_type,  ## 'GearNetEdge' or 'GVP' or 'Bilstm36'
-        'device': device,
+        save_args = {
+            #save setting
+            'plot_title': 'test_set',
+            'date': '240730',
+            'model_name': 'GearNet',
+            'version': 'v1',
+            'result_dir': f'/home/lwang/models/HDX_LSTM/data/COVID_SPIKE/prediction/',
+            'prediction_csv': None,
+            'cluster':cluster,
+            'protein_name': protein,
+            'graph_type': graph_type,  ## 'GearNetEdge' or 'GVP' or 'Bilstm36'
+            'device': device,
 
-        #prediction setting
-        'prediction_protein': protein_list,
-        'model_path': None,
-        #plot setting
-        'slide_window': 1,
-        'show_truth': True,
-        'show_pred': True,
-        }
-    
-    for i in range(len(epoch)):
-        # 240619 GearNet success in 1UGH, 6DJL, 6N1Z, 8F7A
-        #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_cluster1_hop1_v{i}.pth'
+            #prediction setting
+            'prediction_protein': protein_list,
+            'model_path': None,
+            #plot setting
+            'slide_window': 1,
+            'show_truth': True,
+            'show_pred': True,
+            }
+        
+        for i in range(len(epoch)):
+            # 240619 GearNet success in 1UGH, 6DJL, 6N1Z, 8F7A
+            #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240619_GearNetEdge/model_GVP_epoch60_cluster1_hop1_v{i}.pth'
 
-        # 240730 GVP
-        #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240817_GVP/model_GVP56_cluster1_8A_manual_rad8+knn+seqEdge_layer5_v0.pth'
-        #save_args['prediction_csv'] = f"HDX_pred_GVP56_{protein_name}_{cluster}_v{i}.csv"
-        #main(save_args)
+            # 240730 GVP
+            #save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240817_GVP/model_GVP56_cluster1_8A_manual_rad8+knn+seqEdge_layer5_v0.pth'
+            #save_args['prediction_csv'] = f"HDX_pred_GVP56_{protein_name}_{cluster}_v{i}.csv"
+            #main(save_args)
 
-        #240920 GearNet better performance in test set
-        save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240918_GVP/model_GN56_cluster1_8A_manual_rescale_v0_epoch{epoch[i]-1}.pth'
-        save_args['prediction_csv'] = f"HDX_pred_GearNet56_{protein_name}_{cluster}_v{i}_repeat.csv"
-        save_args['result_dir'] = f'/home/lwang/models/HDX_LSTM/data/hdock/prediction/GN56_epoch{epoch[i]}'
-        if not os.path.exists(save_args['result_dir']):
-            os.mkdir(save_args['result_dir'])
-        main(save_args)
+            #240920 GearNet better performance in test set
+            '''save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/240918_GVP/model_GN56_cluster1_8A_manual_rescale_v0_epoch{epoch[i]-1}.pth'
+            save_args['prediction_csv'] = f"HDX_pred_GearNet56_{protein_name}_{cluster}_v{i}_repeat.csv"
+            save_args['result_dir'] = f'/home/lwang/models/HDX_LSTM/data/hdock/prediction/GN56_epoch{epoch[i]}'
+            if not os.path.exists(save_args['result_dir']):
+                os.mkdir(save_args['result_dir'])
+            main(save_args)'''
+
+            #241128 GearNet-hse in covid spike protein prediction
+            save_args['model_path'] = f'/home/lwang/models/HDX_LSTM/results/241110_GearNet/model_GN56_cluster1_8A_manual_rescale_v0_hse_epoch{epoch[i]-1}.pth'
+            save_args['prediction_csv'] = f"HDX_pred_GearNet56_{protein}_epoch{epoch[i]}.csv"
+            save_args['result_dir'] = f'/home/lwang/models/HDX_LSTM/data/COVID_SPIKE/predictions/{protein}'
+            if not os.path.exists(save_args['result_dir']):
+                os.makedirs(save_args['result_dir'])
+            main(save_args)
     
