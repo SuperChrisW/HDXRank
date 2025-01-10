@@ -11,20 +11,33 @@ clone the repository and Use the `HDXRank_minimum.yml` file to create a Conda en
 git clone https://github.com/SuperChrisW/HDXRank.git
 cd HDXRank
 conda env create -f ./HDXRank_minimum.yml
-conda activate <environment_name>
+conda activate HDXRank
 ```
 
 ## Preprocessing
-* temporailly refers to AI-HDX document(https://github.com/Environmentalpublichealth/AI-HDX/blob/main/Documentations/MSA_embedding.md)
+* temporarily refers to AI-HDX document(https://github.com/Environmentalpublichealth/AI-HDX/blob/main/Documentations/MSA_embedding.md)
 
-## Start
-Three input files are required for HDXRank: protein structure file (.pdb), MSA file (.hhm), HDX-MS file (.xlsx),
-HDXRank utilize setting file (.xml) to control the pipeline, basically, HDXRank embed proteins from its pdb file and hhm file,
-and construct protein graph from pdb file, then split protein graph into peptide graphs according to HDX-MS file.
-With all files prepared, run command:
+## Getting Started
+HDXRank requires three input files:
+
+1. **Protein structure file** (`.pdb`)  
+2. **MSA file** (`.hhm`)  
+3. **HDX-MS file** (`.xlsx`)  
+
+Additionally, HDXRank uses a settings file (`.xml`) to control the pipeline.
+
+### Workflow:
+
+1. **Protein embedding**: HDXRank extracts embeddings from `.pdb` and `.hhm` files.  
+2. **Protein graph construction**: Constructs a protein graph from the `.pdb` file.
+3. **Peptide graph splitting**: Splits the protein graph into peptide graphs based on the provided HDX-MS file.
+
+### Execution:
+With all input files prepared, run the following command to start the pipeline:
 ```bash
 python main.py -input ./settings/BatchTable_setting.xml
 ```
 
 ## Citing HDXRank
-if you use HDXRank, please cite the paper: 
+if you use HDXRank, please cite the following paper: 
+[submit for publication]
