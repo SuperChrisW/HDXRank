@@ -1,0 +1,27 @@
+name: HDXRank
+channels:
+  - conda-forge
+  - milagraph
+  - pyg
+  - pytorch
+  - nvidia
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.9
+  - ipykernel
+  - lmdb
+  - fair-esm
+  - pytorch-cuda=11.8
+  - pytorch-scatter
+  - pytorch==2.0.0
+  - torchaudio==2.0.0
+  - torchvision==0.15.0
+  - torchdrug
+  - scipy
+  - biopython
+  - pyg
+  - biotite
+  - openpyxl
+  - matplotlib
+  - seaborn
