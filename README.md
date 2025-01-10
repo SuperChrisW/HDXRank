@@ -15,6 +15,10 @@ conda activate <environment_name>
 ```
 
 ## Quick start
+```
+cd HDXRank
+python main.py -input ./settings/BatchTable_setting.xml
+```
 
 ## Citing HDXRank
 if you use HDXRank, please cite the paper: 
