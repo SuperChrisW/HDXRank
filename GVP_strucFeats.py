@@ -6,7 +6,7 @@ import numpy as np
 import torch, math
 import torch.utils.data as data
 import torch.nn.functional as F
-import torch_geometric
+#import torch_geometric
 import torch_cluster
 
 def _normalize(tensor, dim=-1):
@@ -80,7 +80,7 @@ class ProteinGraphDataset(data.Dataset):
     
     def __getitem__(self, i): return self._featurize_as_graph(self.data_list[i])
     
-    def _featurize_as_graph(self, protein):
+    '''def _featurize_as_graph(self, protein):
         name = protein['name']
         with torch.no_grad():
             coords = torch.as_tensor(protein['coords'], 
@@ -114,7 +114,7 @@ class ProteinGraphDataset(data.Dataset):
                                          node_s=node_s, node_v=node_v,
                                          edge_s=edge_s, edge_v=edge_v,
                                          edge_index=edge_index, mask=mask, y=protein['y'])
-        return data
+        return data'''
                                 
     def _dihedrals(self, X, eps=1e-7):
         # From https://github.com/jingraham/neurips19-graph-protein-design

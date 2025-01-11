@@ -3,6 +3,7 @@ from Bio.PDB.PDBParser import PDBParser
 from Bio.PDB.HSExposure import HSExposureCA
 
 import biotite.structure as struc
+import biotite.structure.io as strucio
 import numpy as np
 
 def get_bio_model(pdbfile):

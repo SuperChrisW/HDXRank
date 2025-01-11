@@ -13,7 +13,6 @@ import networkx as nx
 
 import torch
 from torch.utils.data import Dataset
-from torch_geometric.data import HeteroData
 from torch_cluster import knn_graph, radius_graph
 from torchdrug import data
 
@@ -345,44 +344,6 @@ def add_edges(G, edge_types, coord = None, max_distance=8.0, min_seq_sep=3):
     logging.info(G)
     return G
 
-from torch_geometric.data import HeteroData
-def networkx_to_HeteroG(subG): # convert to pytorch geometric HeteroData
-    data = HeteroData()
-
-    id_map = {}
-    for i, (node, node_attr) in enumerate(subG.nodes(data=True)):
-        # Assuming node feature vector 'x' is already a tensor or can be converted as such
-        #data['residue'].x = torch.cat([data['residue'].x, node_attr['x'].unsqueeze(0)], dim=0) if 'x' in data['residue'] else node_attr['x'].unsqueeze(0)
-        if node not in id_map.keys():
-            id_map[node] = i
-    data['residue'].num_nodes = len(id_map.keys())
-
-    edge_index_dict = {}
-    for u, v, edge_attr in subG.edges(data=True):
-        edge_type = edge_attr['edge_type']
-        edge_label = ('residue', edge_type, 'residue')
-        edge_index = [id_map[u], id_map[v]]
-        if edge_label not in edge_index_dict.keys():
-            edge_index_dict[edge_label] = [edge_index]
-        else:
-            edge_index_dict[edge_label].append(edge_index)
-    for edge_label, edge_index in edge_index_dict.items():
-        edge_index = torch.as_tensor(edge_index, dtype=torch.long).t().contiguous()
-        data[edge_label].edge_index = edge_index
-
-    if 'y' in subG.graph:
-        data['residue'].y = torch.as_tensor([subG.graph['y']], dtype=torch.float32)
-    if 'range' in subG.graph:
-        data['residue'].range = torch.as_tensor([subG.graph['range']], dtype=torch.float32)
-    if 'chain' in subG.graph:
-        data['residue'].chain = torch.as_tensor([subG.graph['chain']], dtype=torch.int64)
-    if 'seq_embedding' in subG.graph:
-        data['residue'].seq_embedding = torch.as_tensor(subG.graph['seq_embedding'], dtype=torch.float32)
-    if 'is_complex' in subG.graph:
-        data['residue'].is_complex = torch.as_tensor([subG.graph['is_complex']], dtype=torch.int64)
-
-    return data
-
 def networkx_to_tgG(G): # convert to torchdrug protein graph
     node_position = torch.as_tensor(np.array([G.nodes[node]['residue_coord'] for node in G.nodes()]), dtype=torch.float32)
     num_atom = G.number_of_nodes()
@@ -616,7 +577,7 @@ class pepGraph(Dataset):
 
         database_id = self.keys[0][index].strip()
         embedding_fname = self.keys[3][index].strip().split('.')[0]
-        pdb_fname = embedding_fname
+        pdb_fname = embedding_fname.upper()
         embedding_fname = embedding_fname.upper()
         protein = self.keys[1][index]
         state = self.keys[2][index]

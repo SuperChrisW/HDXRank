@@ -3,17 +3,17 @@
 <HDXRank>
     <GeneralParameters>
         <RootDir>/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/HDXRank/dataset</RootDir>
-        <EmbeddingDir>embedding_files</EmbeddingDir>
+        <EmbeddingDir>embedding-hse</EmbeddingDir>
         <PDBDir>structures</PDBDir>
         <hhmDir>hhm_files</hhmDir>
         <HDXDir>HDX_files</HDXDir>
-        <pepGraphDir>graph_ensemble_GearNet</pepGraphDir>
+        <pepGraphDir>graph_ensemble-hse</pepGraphDir>
         <Mode>BatchTable</Mode><!-- BatchTable/BatchAF/BatchDock/Single -->
         <TaskFile>250110_HDXRank_dataset</TaskFile><!-- Required in train or docking mode, task file Root_dir/TaskFile_name.xlsx -->
     </GeneralParameters>
 
     <EmbeddingParameters>
-        <Switch>False</Switch>
+        <Switch>True</Switch>
         <StructureList>None</StructureList> <!-- Protein structure file name -->
         <ProteinChains>None</ProteinChains>
         <NAChains>None</NAChains>

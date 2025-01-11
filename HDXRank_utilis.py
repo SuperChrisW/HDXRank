@@ -18,7 +18,6 @@ warnings.filterwarnings("ignore")
 
 import logging
 
-
 def XML_process(input_file):
     tree = ET.parse(input_file)
     root = tree.getroot()
@@ -475,7 +474,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
     HDMD = np.array([chemdata.AA_array[res] for res in res_seq]).reshape(-1, 5)
 
     # physical-based features
-    hse_dict = get_hse(model, chain_id)
+    #hse_dict = get_hse(model, chain_id)
     SASA = biotite_SASA(pdb_file, chain_id)[:max_len]
 
     # MSA-based features
@@ -498,10 +497,10 @@ def load_protein(hhm_file, pdb_file, chain_id):
         raise ValueError('Sequence mismatch between HMM and DSSP')
 
     corrected_hse_mtx = np.zeros((max_len, 3)) #hse feature doestn't influence the prediction according to SHAP analysis, can be removed
-    for i, res_j in enumerate(residue_data.keys()):
+    '''for i, res_j in enumerate(residue_data.keys()):
         res_j = str(res_j)
         if (chain_id, res_j) in hse_dict.keys():
-            corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])
+            corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])'''
 
     print('protein length:', len(residue_data.keys()))
     print('SASA length:', SASA.shape)
