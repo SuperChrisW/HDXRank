@@ -112,11 +112,14 @@ def embed_protein(structure_dir, hhm_dir, save_dir, pdb_fname, protein_chain_hhm
         elif chain_id in SM_chain:
             SM_inputs.append(load_sm(pdb_file, chain_id))
 
-    embedding = [protein.construct_embedding() for protein in protein_inputs]
-    embed_mtx = torch.cat(embedding, dim=0)
+    if len(protein_inputs) >0:
+        embedding = [protein.construct_embedding() for protein in protein_inputs]
+        embed_mtx = torch.cat(embedding, dim=0)
 
-    chain_list = [chain for chain in structure.get_chains() if chain.id in protein_chain_hhms]
-    res_list = Selection.unfold_entities(chain_list, 'R')
+        chain_list = [chain for chain in structure.get_chains() if chain.id in protein_chain_hhms]
+        res_list = Selection.unfold_entities(chain_list, 'R')
+    else:
+        return False
 
     ### block the following code as the Heteroatom encoding is not used in the current HDXRank model ###
     '''
@@ -180,15 +183,23 @@ def BatchTable_embedding(tasks):
     df = pd.read_excel(os.path.join(tasks["GeneralParameters"]["RootDir"], f"{tasks['GeneralParameters']['TaskFile']}.xlsx"), 
                        sheet_name='Sheet1')
     df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir)  
 
     for _, row in df.iterrows():
-        pdb_fname = str(row['structure_file']).upper().split('.')[0]
+        file_string = str(row['structure_file']).upper().split('.')[0]
+        pdb_fnames = file_string.split(':')
         protein_chain = row['protein_chain'].split(',')
-        if not os.path.isdir(save_dir):
-            os.makedirs(save_dir)
 
-        protein_chain_hhms = {chain: pdb_fname for chain in protein_chain}
-        embed_protein(structure_dir, hhm_dir, save_dir, pdb_fname, protein_chain_hhms, NA_chain=[], SM_chain=[])
+        if pdb_fnames[0] != 'MODEL':
+            protein_chain_hhms = {chain: pdb_fnames[0] for chain in protein_chain}
+            embed_protein(structure_dir, hhm_dir, save_dir, pdb_fnames[0], protein_chain_hhms, NA_chain=[], SM_chain=[])
+        else:
+            N_model = int(tasks['TaskParameters']['DockingModelNum'])
+            protein_chain_hhms = {chain: pdb_fnames[j+1] for j, chain in enumerate(protein_chain)}
+            for i in range(1, N_model+1):
+                embed_protein(structure_dir, hhm_dir, save_dir, f'MODEL_{i}_REVISED', protein_chain_hhms, NA_chain=[], SM_chain=[])
+
 
 def XML_embedding(tasks):
     structure_dir = tasks['GeneralParameters']['PDBDir']

@@ -165,7 +165,7 @@ def parse_xlsx_task(tasks):
     protein_chains=  []
     complex_state = []
     structure_list = []
-    feat_identifier = []
+    embedding_fname = []
 
     #process HDX data by apo_identifier (pdb structures)
     for i, temp_apo in enumerate(apo_identifier):
@@ -179,7 +179,7 @@ def parse_xlsx_task(tasks):
             temp_complex_state = temp_df['complex_state'].astype(str).to_list()
 
             structure_list.append(temp_apo)
-            feat_identifier.append([temp_apo.upper()]*len(temp_protein_chains))
+            embedding_fname.append([temp_apo.upper()]*len(temp_protein_chains))
             protein.append(temp_protein)
             state.append(temp_state)
             chain_identifier.append(temp_chain)
@@ -192,6 +192,7 @@ def parse_xlsx_task(tasks):
             N_model = int(tasks["TaskParameters"]["DockingModelNum"])
             model_list = [f'MODEL_{i}_REVISED' for i in range(1, N_model+1)]
             apo_models = temp_apo.split(":")[1:] # suppose the format is MODEL:apo1:apo2: ...
+            print('split models into :', apo_models)
             temp_df = df[df['structure_file'].isin(apo_models)]
 
             temp_protein = [temp_df['protein'].astype(str).to_list()] * N_model
@@ -210,10 +211,11 @@ def parse_xlsx_task(tasks):
             database_id.extend(temp_database_id)
             protein_chains.extend(temp_protein_chains)
             complex_state.extend(temp_complex_state)
-            feat_identifier.extend([apo_models] * N_model)
+            embedding_fname.extend([apo_models] * N_model)
 
             structure_list = structure_list + model_list
-    keys = [database_id, protein, state, structure_list, chain_identifier, correction, protein_chains, complex_state, feat_identifier]
+    keys = [database_id, protein, state, structure_list, chain_identifier, correction, protein_chains, complex_state, embedding_fname]
+    print('embedding_fname', keys[-1])
     return keys
 
 class ChemData():
@@ -342,56 +344,14 @@ class RawInputData:
         self.seq_data = {**self.seq_data, **data.seq_data}
         return self
 
-def load_embedding(fpath, feat_rescale = True):
-    """
-    Load the embedding from a file, return a dictionary of embedding for each residue
-    Note: embedding_fpath is a list of embedding file paths for each chain, {apo_identifier}_{chain}.embedding.txt
-    embedding file: 0 res_id, 1 res_name, 2-6 HDMD, 7 res_charge, 8-11 res_polarity,
-                                    12 SASA, 13 rigidity, 14-16 corrected_hse_mtx, 17- 36 hhm_mtx
-    """
-    embedding_dict = {}
-    embedding = pd.read_table(fpath, header=None, sep=' ')
-    embedding_seq = embedding.loc[:,1].to_numpy()
-    embedding_index= embedding.loc[:,0].to_numpy()
-
-    # sequence-based features
-    HDMD = embedding.loc[:, 2:6].to_numpy().reshape(-1, 5)
-    Res_charge = embedding.loc[:, 7].to_numpy().reshape(-1, 1)
-    Res_polarity = embedding.loc[:, 8:11].to_numpy().reshape(-1, 4)
-
-    #structure-based features
-    SASA = embedding.loc[:, 12].to_numpy().reshape(-1, 1)
-    rigidity = embedding.loc[:, 13].to_numpy().reshape(-1, 1)
-    HSE = embedding.loc[:, 14:16].to_numpy()
-
-    #MSA-based features
-    HHblits = embedding.loc[:, 17:].to_numpy()
-
-    #transform
-    def rescale(data):
-        data_max = np.max(data, axis=0)
-        data_min = np.min(data, axis=0)
-        rescale_data = (data - data_min[None, :]) / (data_max - data_min)[None, :]
-        rescale_data = np.nan_to_num(rescale_data, nan=0.0)
-        if feat_rescale:
-            return rescale_data
-        else:
-            return data
-    rescale_HSE = rescale(HSE)
-    rescale_HHblits = rescale(HHblits)
-    rescale_HDMD = rescale(HDMD)
-    rescale_Res_charge = rescale(Res_charge)
-
-    # order: SASA, rigidity, HSE, HHblits, HDMD, Res_charge, Res_polarity
-    feature_array = np.concatenate((SASA, rigidity, rescale_HSE, rescale_HHblits, 
-                                    rescale_HDMD, rescale_Res_charge, Res_polarity), axis=1)
-
-    embedding_dict = {
-        embedding.iloc[i, 0]: torch.tensor(feature_array[i, :], dtype = torch.float32) 
-        for i in range(embedding.shape[0])}
-    embedding_matrix = torch.tensor(feature_array, dtype=torch.float32)
-
-    return embedding_dict, embedding_matrix, embedding_seq
+def load_embedding(fpath):
+    if not os.path.isfile(fpath):
+        logging.error(f"Missing embedding file: {fpath}")
+        return False
+    embedding_dict = torch.load(fpath)
+    protein_embedding = embedding_dict['embedding']
+    chain_label = np.array(embedding_dict['chain_label'])
+    return chain_label, protein_embedding
 
 def get_seq_polarity(seq):
     encode_index = [chemdata.polarity_encoding[chemdata.residue_polarity[chemdata.one_to_three[res]]] for res in seq]

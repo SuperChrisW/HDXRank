@@ -10,6 +10,7 @@ import os
 import numpy as np
 import pandas as pd
 import networkx as nx
+from HDXRank_utilis import load_embedding
 
 import torch
 from torch.utils.data import Dataset
@@ -405,21 +406,32 @@ def create_graph(pdb_fpath, embedding_dir, embedding_fname, **kwargs):
     Returns:
         networkx.Graph: protein graphs with nodes, edges and attributes
     '''
-    
+
     protEmbed_dict = {}
+    embedding_fpaths=[]
+    chain_labels = np.array([])
+    protein_embeddings = torch.tensor([], dtype=torch.float32)
+
     if kwargs['embedding_type'] == 'manual':
-        embedding_fpath = os.path.join(embedding_dir, f"{embedding_fname}.pt")
-        if not os.path.isfile(embedding_fpath):
-            logging.error(f"Missing embedding file: {embedding_fpath}")
-            return None
-        embedding_dict = torch.load(embedding_fpath)
-        protein_embedding = embedding_dict['embedding']
-        chain_label = np.array(embedding_dict['chain_label'])
-        for chain in set(chain_label):
-            mask = (chain_label == chain)
-            protEmbed_dict[chain] = protein_embedding[mask]
+        if isinstance(embedding_fname, str):
+            embedding_fpaths.append(os.path.join(embedding_dir, f"{embedding_fname}.pt"))
+        else:
+            embedding_fpaths.extend([os.path.join(embedding_dir, f"{fname}.pt") for fname in embedding_fname])
+
+        for sub_fpath in embedding_fpaths:
+            chain_label, protein_embedding = load_embedding(sub_fpath)
+            chain_labels = np.concatenate([chain_labels, chain_label], axis=0)
+            protein_embeddings = (
+                torch.cat([protein_embeddings, protein_embedding])
+                if protein_embeddings.numel() > 0 else protein_embedding
+            )
+
+        for chain in set(chain_labels):
+            mask = (chain_labels == chain)
+            protEmbed_dict[chain] = protein_embeddings[mask]
+
+    #elif  add other types of embedding here 
     else:
-        logging.error(f"Unknown embedding type: {kwargs['embedding_type']}")
         raise ValueError("Unknown embedding type:", kwargs['embedding_type'])
 
     G = ResGraph(pdb_fpath, protEmbed_dict, protein_chains=list(protEmbed_dict.keys()))
@@ -569,22 +581,21 @@ class pepGraph(Dataset):
     def __getitem__(self, index):
         '''
         return the graph for the index-th protein complex
-        keys format: [database_id, protein, state, match_uni, embedding_fname, chain_identifier, correction, protein_chains]
+        keys format: [database_id, protein, state, pdb_fname, chain_identifier, correction, protein_chains, complex_state, embedding_fname]
         '''
         atoms._registry = {}
         res._registry = []
         pep._registry = []
 
         database_id = self.keys[0][index].strip()
-        embedding_fname = self.keys[3][index].strip().split('.')[0]
-        pdb_fname = embedding_fname.upper()
-        embedding_fname = embedding_fname.upper()
+        pdb_fname = self.keys[3][index].strip().split('.')[0].upper()
         protein = self.keys[1][index]
         state = self.keys[2][index]
         chain_identifier = self.keys[4][index]
         correction = self.keys[5][index]
         protein_chains = self.keys[6][index]
         complex_state = self.keys[7][index]
+        embedding_fname = self.keys[8][index]
 
         logging.info(f'Processing task: {database_id} {protein} {state} {chain_identifier}')
 
@@ -595,8 +606,8 @@ class pepGraph(Dataset):
         elif isinstance(protein_chains, list):
             protein_chains = [chains.split(',') for chains in protein_chains]
         
-        if os.path.isfile(os.path.join(self.save_dir, f'{embedding_fname}.pt')):
-            logging.info(f'File already exists: {embedding_fname}.pt')
+        if os.path.isfile(os.path.join(self.save_dir, f'{pdb_fname}.pt')):
+            logging.info(f'File already exists: {pdb_fname}.pt')
             return None
         if not os.path.isfile(target_HDX_fpath):
             logging.error(f'Missing HDX table: {target_HDX_fpath}')
@@ -618,5 +629,5 @@ class pepGraph(Dataset):
 
         graph_ensemble = split_graph(G, max_len = self.params['max_len'], complex_state_id = self.complex_state_dict[complex_state], graph_type = self.params['graph_type'])
  
-        label = f'{embedding_fname}'.upper()
+        label = f'{pdb_fname}'.upper()
         return graph_ensemble, label
