@@ -1,4 +1,5 @@
 # HDXRank
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14625492.svg)](https://doi.org/10.5281/zenodo.14625492)
 **HDXRank is an open-source pipeline to apply HDX-MS restraints to protein-protein complex prediction ranking.**
 
 ## Method overview:
