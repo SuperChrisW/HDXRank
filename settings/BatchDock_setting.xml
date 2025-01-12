@@ -48,7 +48,7 @@
         <Switch>True</Switch>
         <ModelDir>../../Model/</ModelDir> <!-- Path to the HDXRank model directory -->
         <PredDir>../../output/</PredDir>
-        <ModelList>HDXRank_GN56+hse_v0,HDXRank_GN56+hse_v1,HDXRank_GN56+hse_v2</ModelList>
+        <ModelList>HDXRank_GN56-hse_epoch100_v0,HDXRank_GN56-hse_epoch100_v1,HDXRank_GN56-hse_epoch100_v2</ModelList>
         <CudaID>0</CudaID>
         <BatchSize>64</BatchSize>
     </PredictionParameters>

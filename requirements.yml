@@ -4,6 +4,7 @@ channels:
   - milagraph
   - pytorch
   - nvidia
+  - pyg
   - defaults
 
 dependencies:

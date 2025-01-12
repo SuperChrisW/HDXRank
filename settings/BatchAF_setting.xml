@@ -2,7 +2,7 @@
 <!-- Template of HDXRank pipeline setting-->
 <HDXRank>
     <GeneralParameters>
-        <RootDir>/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/HDXRank/example/AF_Cov19_icoHu23</RootDir>
+        <RootDir>/home/lwang/AI-HDX-main/ProteinComplex_HDX_prediction/example/AF_Cov19_icoHu23</RootDir>
         <EmbeddingDir>embedding_files</EmbeddingDir>
         <PDBDir>structures</PDBDir>
         <hhmDir>hhm_files</hhmDir>
@@ -23,7 +23,7 @@
 
     <TaskParameters>
         <Switch>True</Switch>
-        <SeedNum>2</SeedNum> <!-- Seeds for AlphaFold sampling (AF mode)-->
+        <SeedNum>10</SeedNum> <!-- Seeds for AlphaFold sampling (AF mode)-->
         <DockingModelNum>0</DockingModelNum> <!-- Number of generated docking models (docking mode)-->        
         <DatabaseID>Wuhan_icoHu23</DatabaseID> <!-- HDX file: [database_id].xlsx -->
         <Protein>Wuhan_cov19</Protein> <!-- Protein label in HDX file -->
@@ -48,7 +48,7 @@
         <Switch>True</Switch>
         <ModelDir>../../Model/</ModelDir> <!-- Path to the HDXRank model directory -->
         <PredDir>../../output/</PredDir>
-        <ModelList>HDXRank_GN56+hse_v0,HDXRank_GN56+hse_v1,HDXRank_GN56+hse_v2</ModelList>
+        <ModelList>HDXRank_GN56-hse_epoch100_v0,HDXRank_GN56-hse_epoch100_v1,HDXRank_GN56-hse_epoch100_v2</ModelList>
         <CudaID>0</CudaID>
         <BatchSize>64</BatchSize>
     </PredictionParameters>
