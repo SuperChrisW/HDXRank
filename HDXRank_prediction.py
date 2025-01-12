@@ -90,8 +90,6 @@ def HDXRank_prediction(tasks, keys):
         y_true_list = np.array(y_true_list)
         y_pred_list = np.array(y_pred_list)
 
-        print(y_true_list.shape, y_pred_list.shape, range_list.shape, chain_list.shape, x_strings.shape, batch_list.shape)
-
         data = {
         'Batch': batch_list,
         'Y_True': y_true_list,

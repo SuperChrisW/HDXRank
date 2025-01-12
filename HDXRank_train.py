@@ -158,7 +158,7 @@ def main():
         val_set = val_apo + val_complex
         train_loader = DataLoader(train_set+val_set, batch_size=args.batch_size, shuffle=True) # use all data to train the final model
         #val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
-        print('training set:', len(train_set+val_set))
+        logging.info(f'training set: {len(train_set+val_set)}')
         #print('val set:', len(val_set))
 
         model, optimizer, loss_fn = prepare_model(input_dim=56, hidden_dims=[512, 512, 512], num_relation=7, device=device)

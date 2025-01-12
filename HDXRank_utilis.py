@@ -192,7 +192,6 @@ def parse_xlsx_task(tasks):
             N_model = int(tasks["TaskParameters"]["DockingModelNum"])
             model_list = [f'MODEL_{i}_REVISED' for i in range(1, N_model+1)]
             apo_models = temp_apo.split(":")[1:] # suppose the format is MODEL:apo1:apo2: ...
-            print('split models into :', apo_models)
             temp_df = df[df['structure_file'].isin(apo_models)]
 
             temp_protein = [temp_df['protein'].astype(str).to_list()] * N_model
@@ -215,7 +214,6 @@ def parse_xlsx_task(tasks):
 
             structure_list = structure_list + model_list
     keys = [database_id, protein, state, structure_list, chain_identifier, correction, protein_chains, complex_state, embedding_fname]
-    print('embedding_fname', keys[-1])
     return keys
 
 class ChemData():
@@ -412,13 +410,13 @@ def load_protein(hhm_file, pdb_file, chain_id):
         if res_name in chemdata.STDAAS:
             res_seq.append(chemdata.three_to_one[res_name])
         else:
-            print(f'Non-standard AA found: {res_name}')
+            logging.error(f'Non-standard AA found: {res_name}')
         try:
             N_coord = list(res['N'].get_coord() if 'N' in res else [0, 0, 0])
             Ca_coord = list(res['CA'].get_coord() if 'CA' in res else [0, 0, 0])
             C_coord = list(res['C'].get_coord() if 'C' in res else [0, 0, 0])
         except KeyError:
-            print(f'KeyError at residue {res_id} {res_name} in chain {chain_id}')
+            logging.error(f'KeyError at residue {res_id} {res_name} in chain {chain_id}')
         res_coord = [N_coord, Ca_coord, C_coord]
         residue_coord.append(res_coord)
         residue_data[res_id] = {
@@ -452,8 +450,8 @@ def load_protein(hhm_file, pdb_file, chain_id):
     elif hhm_seq[:-1] == res_seq:
         hhm_mtx = hhm_mtx[:-1]
     else:
-        print(hhm_seq)
-        print(res_seq)
+        print("hhm_sequenece:", hhm_seq)
+        print("dssp_sequenece:", res_seq)
         raise ValueError('Sequence mismatch between HMM and DSSP')
 
     corrected_hse_mtx = np.zeros((max_len, 3)) #hse feature doestn't influence the prediction according to SHAP analysis, can be removed
@@ -462,7 +460,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
         if (chain_id, res_j) in hse_dict.keys():
             corrected_hse_mtx[i, :] = list(hse_dict[(chain_id, res_j)])'''
 
-    print('protein length:', len(residue_data.keys()))
+    '''print('protein length:', len(residue_data.keys()))
     print('SASA length:', SASA.shape)
     print('HSE length:', corrected_hse_mtx.shape)
     print('HDMD length:', HDMD.shape)
@@ -470,7 +468,7 @@ def load_protein(hhm_file, pdb_file, chain_id):
     print('res_polarity length:', res_polarity.shape)
     print('hhm length:', hhm_mtx.shape)
     print('dihedrals length:', dihedrals.shape)
-    print('orientations length:', orientations.shape)
+    print('orientations length:', orientations.shape)'''
 
     return RawInputData(
         msa = torch.tensor(hhm_mtx, dtype = torch.float32),

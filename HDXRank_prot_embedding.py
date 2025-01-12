@@ -184,10 +184,11 @@ def BatchTable_embedding(tasks):
                        sheet_name='Sheet1')
     df = df.dropna(subset=['structure_file']).drop_duplicates(subset=['structure_file'])
     if not os.path.isdir(save_dir):
-        os.makedirs(save_dir)  
+        os.makedirs(save_dir)
 
     for _, row in df.iterrows():
         file_string = str(row['structure_file']).upper().split('.')[0]
+        # pdb_fnames and protein_chain should have same orders
         pdb_fnames = file_string.split(':')
         protein_chain = row['protein_chain'].split(',')
 

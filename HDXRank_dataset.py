@@ -90,7 +90,7 @@ def parse_PDB(PDB_path, protein_chains=['A'], atom_type_list=['N','CA','C', 'O']
         list: A list of residue information.
     """
     if not os.path.isfile(PDB_path):
-        print(f"Error: File not found. {PDB_path}")
+        logging.error(f"Error: File not found. {PDB_path}")
         return None
     
     chain_data = {chain: {'nodes': [], 'backbone_coord': np.zeros((len(atom_type_list), 3), dtype=np.float32), 'last_res': 0, 'last_res_info': None} for chain in protein_chains}
@@ -149,7 +149,7 @@ def parse_PDB(PDB_path, protein_chains=['A'], atom_type_list=['N','CA','C', 'O']
             raise ValueError(f"{chain_id} is not found in the PDB file.")
     
     nodes = []
-    for chain_info in chain_data.values():
+    for chain, chain_info in chain_data.items():
         for node_info in chain_info['nodes']:
             nodes.append((len(nodes),node_info))
 
@@ -595,7 +595,7 @@ class pepGraph(Dataset):
         correction = self.keys[5][index]
         protein_chains = self.keys[6][index]
         complex_state = self.keys[7][index]
-        embedding_fname = self.keys[8][index]
+        #embedding_fname = self.keys[8][index]
 
         logging.info(f'Processing task: {database_id} {protein} {state} {chain_identifier}')
 
@@ -618,7 +618,7 @@ class pepGraph(Dataset):
 
         # residue graph generation #
         logging.info('Creating graph...')
-        G = create_graph(pdb_fpath, self.embedding_dir, embedding_fname=embedding_fname, embedding_type = self.params['embedding_type'], 
+        G = create_graph(pdb_fpath, self.embedding_dir, embedding_fname=pdb_fname, embedding_type = self.params['embedding_type'], 
                         max_distance = self.params['max_distance'], min_seq_sep = self.params['min_seq_sep'])
         if G is None:
             logging.error("Cannot create graph")
